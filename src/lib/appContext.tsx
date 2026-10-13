@@ -1,0 +1,197 @@
+/** 全局应用状态:设置 / 客户池 / 日志 / 配额 / Toast,统一在此持久化与分发。 */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  loadLogs,
+  loadPool,
+  loadSettings,
+  loadUsage,
+  saveLogs,
+  savePool,
+  saveSettings,
+  saveUsage,
+} from "./store";
+import type { LogEntry, PoiItem, PoolItem, PoolStatus, Settings } from "./types";
+
+export type ToastKind = "info" | "success" | "error";
+interface Toast {
+  id: number;
+  kind: ToastKind;
+  msg: string;
+}
+
+interface AppCtx {
+  settings: Settings;
+  updateSettings: (patch: Partial<Settings>) => void;
+  theme: "dark" | "light";
+
+  pool: PoolItem[];
+  addToPool: (items: PoiItem[]) => number;
+  updatePoolItem: (poiId: string, patch: Partial<Pick<PoolItem, "status" | "note">>) => void;
+  removeFromPool: (poiId: string) => void;
+  clearPool: () => void;
+  inPool: (poiId: string) => boolean;
+
+  logs: LogEntry[];
+  pushLog: (entry: Omit<LogEntry, "id" | "time">) => void;
+  clearLogs: () => void;
+
+  /** 今日已用配额 */
+  usage: number;
+  /** 消耗 1 次配额,返回 false 表示已到顶(调用方应停止检索) */
+  consumeQuota: () => boolean;
+  resetUsage: () => void;
+
+  toast: (msg: string, kind?: ToastKind) => void;
+  toasts: Toast[];
+  dismissToast: (id: number) => void;
+}
+
+const Ctx = createContext<AppCtx | null>(null);
+
+export function useApp(): AppCtx {
+  const v = useContext(Ctx);
+  if (!v) throw new Error("useApp must be used within AppProvider");
+  return v;
+}
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const [pool, setPool] = useState<PoolItem[]>(() => loadPool());
+  const [logs, setLogs] = useState<LogEntry[]>(() => loadLogs());
+  const [usage, setUsage] = useState<number>(() => loadUsage());
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
+
+  useEffect(() => saveSettings(settings), [settings]);
+  useEffect(() => savePool(pool), [pool]);
+  useEffect(() => saveLogs(logs), [logs]);
+  useEffect(() => saveUsage(usage), [usage]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+  }, [settings.theme]);
+
+  const toast = useCallback((msg: string, kind: ToastKind = "info") => {
+    const id = ++toastId.current;
+    setToasts((t) => [...t, { id, kind, msg }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3800);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
+
+  const updateSettings = useCallback((patch: Partial<Settings>) => {
+    setSettings((s) => ({ ...s, ...patch }));
+  }, []);
+
+  const inPool = useCallback((poiId: string) => pool.some((p) => p.poiId === poiId), [pool]);
+
+  const addToPool = useCallback((items: PoiItem[]) => {
+    let added = 0;
+    setPool((prev) => {
+      const next = [...prev];
+      for (const it of items) {
+        if (!it.poiId || next.some((p) => p.poiId === it.poiId)) continue;
+        next.push({ ...it, status: "待跟进" as PoolStatus, note: "", addedAt: new Date().toISOString() });
+        added++;
+      }
+      return next;
+    });
+    return added;
+  }, []);
+
+  const updatePoolItem = useCallback(
+    (poiId: string, patch: Partial<Pick<PoolItem, "status" | "note">>) => {
+      setPool((prev) => prev.map((p) => (p.poiId === poiId ? { ...p, ...patch } : p)));
+    },
+    [],
+  );
+
+  const removeFromPool = useCallback((poiId: string) => {
+    setPool((prev) => prev.filter((p) => p.poiId !== poiId));
+  }, []);
+
+  const clearPool = useCallback(() => setPool([]), []);
+
+  const pushLog = useCallback((entry: Omit<LogEntry, "id" | "time">) => {
+    setLogs((prev) =>
+      [
+        ...prev,
+        {
+          ...entry,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          time: new Date().toISOString(),
+        },
+      ].slice(-500),
+    );
+  }, []);
+
+  const clearLogs = useCallback(() => setLogs([]), []);
+
+  const consumeQuota = useCallback(() => {
+    let ok = true;
+    setUsage((u) => {
+      if (u >= settings.dailyLimit) {
+        ok = false;
+        return u;
+      }
+      return u + 1;
+    });
+    return ok;
+  }, [settings.dailyLimit]);
+
+  const resetUsage = useCallback(() => setUsage(0), []);
+
+  const value = useMemo<AppCtx>(
+    () => ({
+      settings,
+      updateSettings,
+      theme: settings.theme,
+      pool,
+      addToPool,
+      updatePoolItem,
+      removeFromPool,
+      clearPool,
+      inPool,
+      logs,
+      pushLog,
+      clearLogs,
+      usage,
+      consumeQuota,
+      resetUsage,
+      toast,
+      toasts,
+      dismissToast,
+    }),
+    [
+      settings, updateSettings, pool, addToPool, updatePoolItem, removeFromPool, clearPool,
+      inPool, logs, pushLog, clearLogs, usage, consumeQuota, resetUsage, toast, toasts, dismissToast,
+    ],
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function ToastStack() {
+  const { toasts, dismissToast } = useApp();
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}`} onClick={() => dismissToast(t.id)} role="status">
+          <span className="toast-dot" />
+          <span>{t.msg}</span>
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -1,0 +1,98 @@
+/* ============================================================
+   FieldGrow 设计系统 · 设计令牌
+   深色为主(地推外勤常用),支持浅色切换;全部经 CSS 变量驱动
+   ============================================================ */
+
+:root {
+  /* —— 字体 —— */
+  --font: "Inter", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", ui-monospace, monospace;
+
+  /* —— 深色(默认) —— */
+  --bg-0: #0a0e0d;
+  --bg-1: #0f1513;
+  --bg-2: #151d1a;
+  --bg-3: #1b2521;
+  --bg-hover: #202c27;
+  --glass: rgba(255, 255, 255, 0.035);
+  --glass-strong: rgba(255, 255, 255, 0.06);
+
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.13);
+
+  --text-0: #f0f6f3;
+  --text-1: #a3b3ac;
+  --text-2: #6b7b74;
+  --text-3: #4a5852;
+
+  --accent: #34d399;
+  --accent-2: #6ee7b7;
+  --accent-ink: #052e20;
+  --accent-soft: rgba(52, 211, 153, 0.13);
+  --accent-glow: rgba(52, 211, 153, 0.35);
+
+  --amber: #f5b544;
+  --amber-soft: rgba(245, 181, 68, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.13);
+  --info: #7dd3fc;
+  --info-soft: rgba(125, 211, 252, 0.13);
+  --violet: #a78bfa;
+  --violet-soft: rgba(167, 139, 250, 0.14);
+
+  /* —— 圆角 / 阴影 / 动效 —— */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.38);
+  --shadow-3: 0 20px 50px rgba(0, 0, 0, 0.5);
+  --ring: 0 0 0 3px var(--accent-glow);
+
+  --dur: 160ms;
+  --ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+
+  --sidebar-w: 216px;
+}
+
+[data-theme="light"] {
+  --bg-0: #eef2f0;
+  --bg-1: #f7faf8;
+  --bg-2: #ffffff;
+  --bg-3: #edf2ef;
+  --bg-hover: #e4ebe7;
+  --glass: rgba(10, 30, 22, 0.03);
+  --glass-strong: rgba(10, 30, 22, 0.055);
+
+  --line: rgba(8, 30, 22, 0.1);
+  --line-strong: rgba(8, 30, 22, 0.17);
+
+  --text-0: #0e1a15;
+  --text-1: #45554e;
+  --text-2: #718079;
+  --text-3: #9aa8a2;
+
+  --accent: #0eb981;
+  --accent-2: #0a9e6e;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(14, 185, 129, 0.12);
+  --accent-glow: rgba(14, 185, 129, 0.28);
+
+  --amber: #d97706;
+  --amber-soft: rgba(217, 119, 6, 0.12);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --info: #0284c7;
+  --info-soft: rgba(2, 132, 199, 0.1);
+  --violet: #7c3aed;
+  --violet-soft: rgba(124, 58, 237, 0.1);
+
+  --shadow-1: 0 1px 2px rgba(20, 40, 32, 0.08);
+  --shadow-2: 0 8px 24px rgba(20, 40, 32, 0.1);
+  --shadow-3: 0 24px 56px rgba(20, 40, 32, 0.16);
+}
