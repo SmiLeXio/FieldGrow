@@ -278,14 +278,22 @@ export async function geocode(address: string, webKey: string, city = ""): Promi
   return loc;
 }
 
-/** 行政区划:城市 → 区县列表(区县筛选用) */
+/** 行政区划:城市 → 区县列表(区县筛选用,含区域中心点) */
 export interface District {
   name: string;
   adcode: string;
+  /** 区县中心点 "lng,lat" */
+  center: string;
 }
 
-export async function fetchDistricts(city: string, webKey: string): Promise<District[]> {
-  if (!webKey) return [];
+export interface DistrictQuery {
+  /** 城市中心点 "lng,lat" */
+  center: string;
+  districts: District[];
+}
+
+export async function fetchDistricts(city: string, webKey: string): Promise<DistrictQuery> {
+  if (!webKey) return { center: "", districts: [] };
   await throttle();
   const data = await callAmap("config/district", {
     key: webKey,
@@ -296,9 +304,10 @@ export async function fetchDistricts(city: string, webKey: string): Promise<Dist
   });
   const top = ((data.districts as Record<string, unknown>[]) || [])[0];
   const children = (top?.districts as Record<string, unknown>[]) || [];
-  return children
-    .map((d) => ({ name: s(d.name), adcode: s(d.adcode) }))
+  const districts = children
+    .map((d) => ({ name: s(d.name), adcode: s(d.adcode), center: s(d.center) }))
     .filter((d) => d.adcode && d.name);
+  return { center: s(top?.center), districts };
 }
 
 /** 圆形检索范围 → 外接矩形(网格深扫用) */

@@ -242,7 +242,7 @@ export function SettingsView() {
             遵守高德开放平台协议:仅人工发起检索、结果人工筛选、支持一键清空,禁止构建全量商户数据库。
           </p>
           <div className="row">
-            <Badge tone="accent">v0.2.1</Badge>
+            <Badge tone="accent">v0.2.2</Badge>
             <Badge tone="info">Windows / macOS / Linux</Badge>
             <Badge tone="violet">Tauri 2 · 轻量内核</Badge>
             <div className="spacer" />

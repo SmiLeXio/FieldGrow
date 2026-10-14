@@ -38,7 +38,7 @@ interface AppCtx {
   updatePoolItem: (poiId: string, patch: Partial<Pick<PoolItem, "status" | "note">>) => void;
   removeFromPool: (poiId: string) => void;
   clearPool: () => void;
-  inPool: (poiId: string) => boolean;
+  inPool: (item: PoiItem) => boolean;
 
   logs: LogEntry[];
   pushLog: (entry: Omit<LogEntry, "id" | "time">) => void;
@@ -94,14 +94,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSettings((s) => ({ ...s, ...patch }));
   }, []);
 
-  const inPool = useCallback((poiId: string) => pool.some((p) => p.poiId === poiId), [pool]);
+  const inPool = useCallback(
+    (it: PoiItem) => {
+      const digits = (it.tel || "").replace(/\D/g, "");
+      const na = `${it.name}|${it.address}`;
+      return pool.some(
+        (p) =>
+          p.poiId === it.poiId ||
+          (digits && (p.tel || "").replace(/\D/g, "") === digits) ||
+          (it.name && `${p.name}|${p.address}` === na),
+      );
+    },
+    [pool],
+  );
 
   const addToPool = useCallback((items: PoiItem[]) => {
     let added = 0;
     setPool((prev) => {
       const next = [...prev];
+      const seenTel = new Set(prev.map((p) => (p.tel || "").replace(/\D/g, "")).filter(Boolean));
+      const seenNa = new Set(prev.map((p) => `${p.name}|${p.address}`));
+      const seenId = new Set(prev.map((p) => p.poiId));
       for (const it of items) {
-        if (!it.poiId || next.some((p) => p.poiId === it.poiId)) continue;
+        const digits = (it.tel || "").replace(/\D/g, "");
+        const na = `${it.name}|${it.address}`;
+        // 自动排重:同 POI / 同电话 / 同店名+地址 任一命中即跳过
+        if (!it.poiId || seenId.has(it.poiId)) continue;
+        if (digits && seenTel.has(digits)) continue;
+        if (it.name && seenNa.has(na)) continue;
+        seenId.add(it.poiId);
+        if (digits) seenTel.add(digits);
+        seenNa.add(na);
         next.push({ ...it, status: "待跟进" as PoolStatus, note: "", addedAt: new Date().toISOString() });
         added++;
       }

@@ -45,8 +45,22 @@ export function saveSettings(s: Settings) {
   save(K.settings, s);
 }
 
+/** 客户池排重:同 POI ID / 同电话号码 / 同店名+地址,任一命中视为同一家,保留最早的一条。 */
+export function dedupePool(items: PoolItem[]): PoolItem[] {
+  const seen = new Set<string>();
+  return items.filter((p) => {
+    const keys = [`id:${p.poiId}`];
+    const digits = (p.tel || "").replace(/\D/g, "");
+    if (digits) keys.push(`tel:${digits}`);
+    if (p.name) keys.push(`na:${p.name}|${p.address}`);
+    if (keys.some((k) => seen.has(k))) return false;
+    for (const k of keys) seen.add(k);
+    return true;
+  });
+}
+
 export function loadPool(): PoolItem[] {
-  return loadList<PoolItem>(K.pool);
+  return dedupePool(loadList<PoolItem>(K.pool));
 }
 
 export function savePool(pool: PoolItem[]) {

@@ -34,7 +34,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
 
   /* —— 检索参数 —— */
   const [mode, setMode] = useState<SearchMode>("text");
-  const [keywords, setKeywords] = useState("咖啡店");
+  const [keywords, setKeywords] = useState("");
   const [region, setRegion] = useState("北京市");
   const [cityLimit, setCityLimit] = useState(true);
   const [bounds, setBounds] = useState<Bounds | null>(null);
@@ -66,6 +66,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
   const [drawReq, setDrawReq] = useState(0);
   const [clearReq, setClearReq] = useState(0);
   const [fitReq, setFitReq] = useState(0);
+  const [viewReq, setViewReq] = useState({ loc: "", zoom: 11, n: 0 });
   const [searchH, setSearchH] = useState(96);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -77,7 +78,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
     return () => ro.disconnect();
   }, []);
 
-  /* —— 区县列表:随城市输入自动加载(供区县筛选/文本检索限定)— — */
+  /* —— 区县列表:随城市输入自动加载;地图自动跳转到城市中心 —— */
   useEffect(() => {
     if (!settings.webKey || !region.trim()) {
       setDistricts([]);
@@ -86,13 +87,15 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
     let alive = true;
     const timer = window.setTimeout(() => {
       fetchDistricts(region.trim(), settings.webKey)
-        .then((list) => {
+        .then((q) => {
           if (!alive) return;
-          setDistricts(list);
+          setDistricts(q.districts);
           // 原选中的区县不在新列表里(换了城市)则清空
-          if (districtAdcode && !list.some((d) => d.adcode === districtAdcode)) {
+          if (districtAdcode && !q.districts.some((d) => d.adcode === districtAdcode)) {
             setDistrictAdcode("");
           }
+          // 地图自动跳转到城市中心
+          if (q.center) setViewReq((v) => ({ loc: q.center, zoom: 11, n: v.n + 1 }));
         })
         .catch(() => alive && setDistricts([]));
     }, 500);
@@ -350,6 +353,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
           drawRequest={drawReq}
           clearRectRequest={clearReq}
           fitRequest={fitReq}
+          viewRequest={viewReq}
           onDrawStateChange={setDrawing}
         />
 
@@ -389,7 +393,12 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
             <Select
               value={districtAdcode}
               disabled={!districts.length}
-              onChange={(e) => setDistrictAdcode(e.target.value)}
+              onChange={(e) => {
+                setDistrictAdcode(e.target.value);
+                const d = districts.find((x) => x.adcode === e.target.value);
+                // 地图自动跳转到区县中心
+                if (d?.center) setViewReq((v) => ({ loc: d.center, zoom: 12, n: v.n + 1 }));
+              }}
             >
               <option value="">{districts.length ? "全部区县" : "输入城市后加载"}</option>
               {districts.map((d) => (
@@ -492,7 +501,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
             </>
           )}
 
-          <div className="field" style={{ width: 104 }}>
+          <div className="field" style={{ width: 104 }} title="每次「开始检索」/「加载更多」连续抓取的页数。单次返回 ≈ 页数 × 每页条数;页数越多越全,消耗配额也越多(每页每个关键词计 1 次)">
             <span className="field-label">每次抓取</span>
             <Select value={String(fetchPages)} onChange={(e) => setFetchPages(Number(e.target.value))}>
               {[1, 2, 3, 5].map((n) => (
@@ -503,7 +512,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
             </Select>
           </div>
 
-          <div className="field" style={{ width: 88 }}>
+          <div className="field" style={{ width: 88 }} title="每页条数,高德上限 50。每页越大,同样的结果量消耗的配额次数越少(每页只算 1 次调用)">
             <span className="field-label">每页</span>
             <Select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
               {[10, 20, 30, 50].map((n) => (
@@ -567,14 +576,14 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
                       </div>
                     </div>
                     <button
-                      className={`star-btn ${inPool(r.poiId) ? "on" : ""}`}
-                      title={inPool(r.poiId) ? "已在客户池" : "加入客户池"}
+                      className={`star-btn ${inPool(r) ? "on" : ""}`}
+                      title={inPool(r) ? "已在客户池" : "加入客户池"}
                       onClick={(e) => {
                         e.stopPropagation();
                         addSelectedToPool([r]);
                       }}
                     >
-                      {inPool(r.poiId) ? Icon.starFill({ size: 14 }) : Icon.star({ size: 14 })}
+                      {inPool(r) ? Icon.starFill({ size: 14 }) : Icon.star({ size: 14 })}
                     </button>
                   </div>
                 ))
@@ -668,9 +677,9 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
               </div>
             </div>
             <div className="store-card-actions">
-              <Btn size="sm" variant="primary" disabled={inPool(focusPoi.poiId)} onClick={() => addSelectedToPool([focusPoi])}>
-                {inPool(focusPoi.poiId) ? Icon.check({ size: 13 }) : Icon.star({ size: 13 })}
-                {inPool(focusPoi.poiId) ? "已收藏" : "加入客户池"}
+              <Btn size="sm" variant="primary" disabled={inPool(focusPoi)} onClick={() => addSelectedToPool([focusPoi])}>
+                {inPool(focusPoi) ? Icon.check({ size: 13 }) : Icon.star({ size: 13 })}
+                {inPool(focusPoi) ? "已收藏" : "加入客户池"}
               </Btn>
               <Btn size="sm" onClick={() => setDetailPoi(focusPoi)}>
                 {Icon.info({ size: 13 })} 完整详情
@@ -743,7 +752,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         <DetailModal
           poi={detailPoi}
           webKey={settings.webKey}
-          inPool={inPool(detailPoi.poiId)}
+          inPool={inPool(detailPoi)}
           onAddPool={(item) => addSelectedToPool([item])}
           onClose={() => setDetailPoi(null)}
           onLog={(summary, ok, error) => pushLog({ endpoint: "place/detail", summary, ok, error: error || "" })}

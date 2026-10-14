@@ -78,6 +78,8 @@ export interface MapCanvasProps {
   clearRectRequest: number;
   /** 递增缩放至全部结果 */
   fitRequest: number;
+  /** 视角跳转:n 变化即跳到 loc(zoom 级) */
+  viewRequest: { loc: string; zoom: number; n: number };
   onDrawStateChange?: (drawing: boolean) => void;
 }
 
@@ -94,6 +96,7 @@ export function MapCanvas({
   drawRequest,
   clearRectRequest,
   fitRequest,
+  viewRequest,
   onDrawStateChange,
 }: MapCanvasProps) {
   const { settings, theme } = useApp();
@@ -423,6 +426,23 @@ export function MapCanvas({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitRequest]);
+
+  /* —— 视角跳转(城市/区县变更)— — */
+  const viewNRef = useRef(0);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !viewRequest.n || viewRequest.n === viewNRef.current) return;
+    viewNRef.current = viewRequest.n;
+    try {
+      const [lng, lat] = viewRequest.loc.split(",").map(Number);
+      if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+        map.setZoomAndCenter(viewRequest.zoom, [lng, lat]);
+      }
+    } catch {
+      /* 忽略 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewRequest, ready]);
 
   /* —— 重试 —— */
   const retry = () => {
