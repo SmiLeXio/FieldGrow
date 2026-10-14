@@ -46,7 +46,16 @@ export function DetailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poi.poiId]);
 
-  const d = detail ?? poi;
+  // 详情接口的地址常不含区县/行政区划:区域字段回落到检索结果的值(以检索筛选区域为准)
+  const d: PoiDetail | PoiItem = detail
+    ? {
+        ...poi,
+        ...detail,
+        city: detail.city || poi.city,
+        district: detail.district || poi.district,
+        adcode: detail.adcode || poi.adcode,
+      }
+    : poi;
 
   return (
     <Modal
@@ -61,7 +70,7 @@ export function DetailModal({
             variant="primary"
             disabled={inPool}
             onClick={() => {
-              onAddPool(detail ?? poi);
+              onAddPool(d);
               onClose();
             }}
           >

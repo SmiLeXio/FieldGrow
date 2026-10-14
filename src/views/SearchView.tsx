@@ -225,12 +225,15 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         itemsOut = itemsOut.filter((it) => it.adcode === districtAdcode);
       }
 
-      // 区名校准:区县列表(adcode→名称)比地址解析更权威,有则覆盖
+      // 区域归属以检索筛选的行政区为准,不用商家地址文本解析的结果:
+      // 1) 选了区县 → 全部记为该区县(筛选即认定);2) 区县列表按 adcode 校准;3) 最后才回落地址解析
       const dmap = new Map(districts.map((d) => [d.adcode, d.name] as const));
-      itemsOut = itemsOut.map((it) => {
-        const n = dmap.get(it.adcode);
-        return n && n !== it.district ? { ...it, district: n } : it;
-      });
+      const searchCity = region.trim() && !/^\d+$/.test(region.trim()) ? region.trim() : "";
+      itemsOut = itemsOut.map((it) => ({
+        ...it,
+        city: it.city || searchCity,
+        district: districtName || dmap.get(it.adcode) || it.district,
+      }));
 
       // 合并到结果
       const finalItems =
