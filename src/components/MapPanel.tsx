@@ -290,13 +290,13 @@ export function MapPanel({
     if (!map) return;
     const AMap = window.AMap;
 
-    // 已在画框则先停止
+    // 已在画框则先停止;重新画框即放弃旧范围,避免取消后残留"看不见的框"
     stopDraw();
-    // 移除旧框
     if (rectRef.current) {
       map.remove(rectRef.current);
       rectRef.current = null;
     }
+    if (bounds) onBoundsChange(null);
 
     try {
       const tool = new AMap.MouseTool(map);
@@ -333,7 +333,7 @@ export function MapPanel({
       setDrawing(false);
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [onBoundsChange, stopDraw]);
+  }, [onBoundsChange, stopDraw, bounds]);
 
   /* —— 重试 —— */
   const retry = () => {
