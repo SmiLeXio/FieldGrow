@@ -1,5 +1,6 @@
 /** 地图面板 —— 高德 JS API 可视化:结果打点 / 拖拽框选 / 点选中心点。
  *
+ * 框选基于官方 AMap.MouseTool(画框时自动接管鼠标拖拽,与地图平移互不冲突);
  * JS Key 未配置或加载失败时优雅降级:展示引导占位,检索/导出功能不受影响。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -52,6 +53,14 @@ function loadAMapScript(jsKey: string, securityJsCode: string): Promise<any> {
   return amapLoader;
 }
 
+const RECT_STYLE = {
+  strokeColor: "#34d399",
+  strokeWeight: 2,
+  strokeStyle: "dashed",
+  fillColor: "#34d399",
+  fillOpacity: 0.1,
+};
+
 interface MapPanelProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -83,7 +92,7 @@ export function MapPanel({
   const markersRef = useRef<any[]>([]);
   const rectRef = useRef<any>(null);
   const centerMarkerRef = useRef<any>(null);
-  const drawingRef = useRef(false);
+  const toolRef = useRef<any>(null);
   const onPoiClickRef = useRef(onPoiClick);
   onPoiClickRef.current = onPoiClick;
   const [ready, setReady] = useState(false);
@@ -130,6 +139,23 @@ export function MapPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed, hasJsKey, settings.jsKey]);
+
+  /* —— 容器尺寸变化(视图切换/面板收放)后刷新地图 —— */
+  useEffect(() => {
+    const el = containerRef.current;
+    const map = mapRef.current;
+    if (!el || !map || !ready) return;
+    const ro = new ResizeObserver(() => {
+      try {
+        if (typeof map.resize === "function") map.resize();
+        else map.setCenter(map.getCenter());
+      } catch {
+        /* 忽略 */
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ready]);
 
   /* —— 主题切换 —— */
   useEffect(() => {
@@ -189,9 +215,8 @@ export function MapPanel({
     if (bounds) {
       const rect = new AMap.Rectangle({
         bounds: new AMap.Bounds([bounds.west, bounds.south], [bounds.east, bounds.north]),
-        strokeColor: "#34d399",
-        strokeWeight: 2,
-        fillColor: "#34d399",
+        ...RECT_STYLE,
+        strokeStyle: "solid",
         fillOpacity: 0.08,
       });
       rectRef.current = rect;
@@ -215,7 +240,6 @@ export function MapPanel({
         const m = new AMap.Marker({
           position: [lng, lat],
           anchor: "center",
-          offset: new AMap.Pixel(0, 0),
           content: `<div class="map-pin hot" style="opacity:.95"></div>`,
         });
         centerMarkerRef.current = m;
@@ -230,7 +254,7 @@ export function MapPanel({
     if (!map || !ready) return;
 
     const onClick = (e: any) => {
-      if (drawingRef.current) return;
+      if (toolRef.current) return;
       if (mode === "around") {
         const lng = Number(e.lnglat.getLng()).toFixed(6);
         const lat = Number(e.lnglat.getLat()).toFixed(6);
@@ -244,80 +268,72 @@ export function MapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mode]);
 
-  /* —— 拖拽框选 —— */
+  /* —— 结束/取消画框(还原 MouseTool 与地图拖拽)— — */
+  const stopDraw = useCallback(() => {
+    const tool = toolRef.current;
+    if (tool) {
+      try {
+        tool.close(false);
+      } catch {
+        /* 忽略 */
+      }
+      toolRef.current = null;
+    }
+    setDrawing(false);
+  }, []);
+
+  useEffect(() => () => stopDraw(), [stopDraw]);
+
+  /* —— 拖拽框选(MouseTool,画框时自动接管拖拽,不会与地图平移冲突)— — */
   const startDraw = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
     const AMap = window.AMap;
 
-    // 移除已有框
+    // 已在画框则先停止
+    stopDraw();
+    // 移除旧框
     if (rectRef.current) {
       map.remove(rectRef.current);
       rectRef.current = null;
     }
 
-    let start: any = null;
-    let preview: any = null;
+    try {
+      const tool = new AMap.MouseTool(map);
+      toolRef.current = tool;
+      setDrawing(true);
+      tool.rectangle({ ...RECT_STYLE });
 
-    const onMouseDown = (e: any) => {
-      start = e.lnglat;
-      drawingRef.current = true;
-    };
-    const onMouseMove = (e: any) => {
-      if (!start) return;
-      const b = new AMap.Bounds(
-        [Math.min(start.getLng(), e.lnglat.getLng()), Math.min(start.getLat(), e.lnglat.getLat())],
-        [Math.max(start.getLng(), e.lnglat.getLng()), Math.max(start.getLat(), e.lnglat.getLat())],
-      );
-      if (preview) map.remove(preview);
-      preview = new AMap.Rectangle({
-        bounds: b,
-        strokeColor: "#34d399",
-        strokeWeight: 2,
-        strokeStyle: "dashed",
-        fillColor: "#34d399",
-        fillOpacity: 0.1,
-      });
-      map.add(preview);
-    };
-    const onMouseUp = (e: any) => {
-      if (!start) return;
-      const west = Math.min(start.getLng(), e.lnglat.getLng());
-      const east = Math.max(start.getLng(), e.lnglat.getLng());
-      const south = Math.min(start.getLat(), e.lnglat.getLat());
-      const north = Math.max(start.getLat(), e.lnglat.getLat());
-      if (preview) {
-        map.remove(preview);
-        preview = null;
-      }
-      start = null;
-      drawingRef.current = false;
-      cleanup();
-      if (east - west < 1e-5 || north - south < 1e-5) {
+      tool.on("draw", (e: any) => {
+        let b: any = null;
+        try {
+          b = e.obj.getBounds();
+          map.remove(e.obj);
+        } catch {
+          /* 忽略 */
+        }
+        toolRef.current = null;
+        try {
+          tool.close(false);
+        } catch {
+          /* 忽略 */
+        }
         setDrawing(false);
-        return;
-      }
-      onBoundsChange({
-        west: Number(west.toFixed(6)),
-        south: Number(south.toFixed(6)),
-        east: Number(east.toFixed(6)),
-        north: Number(north.toFixed(6)),
+        if (!b) return;
+        const sw = b.getSouthWest();
+        const ne = b.getNorthEast();
+        const west = Number(sw.getLng().toFixed(6));
+        const south = Number(sw.getLat().toFixed(6));
+        const east = Number(ne.getLng().toFixed(6));
+        const north = Number(ne.getLat().toFixed(6));
+        if (east - west < 1e-5 || north - south < 1e-5) return;
+        onBoundsChange({ west, south, east, north });
       });
+    } catch (err) {
       setDrawing(false);
-    };
-
-    const cleanup = () => {
-      map.off("mousedown", onMouseDown);
-      map.off("mousemove", onMouseMove);
-      map.off("mouseup", onMouseUp);
-    };
-
-    map.on("mousedown", onMouseDown);
-    map.on("mousemove", onMouseMove);
-    map.on("mouseup", onMouseUp);
-    setDrawing(true);
-    void AMap; // 引用保持,便于后续扩展 MouseTool
-  }, [onBoundsChange]);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [onBoundsChange, stopDraw]);
 
   /* —— 重试 —— */
   const retry = () => {
@@ -347,13 +363,20 @@ export function MapPanel({
       <div className="map-head">
         <span className="map-title">地图视图</span>
         {ready && mode === "polygon" && (
-          <Btn size="sm" variant={drawing ? "primary" : "default"} onClick={startDraw}>
+          <Btn size="sm" variant={drawing ? "primary" : "default"} onClick={drawing ? stopDraw : startDraw}>
             {Icon.target({ size: 13 })}
-            {drawing ? "拖拽框选中…" : "框选范围"}
+            {drawing ? "画框中…点击取消" : "框选范围"}
           </Btn>
         )}
         {ready && bounds && (
-          <Btn size="sm" variant="ghost" onClick={() => onBoundsChange(null)}>
+          <Btn
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              stopDraw();
+              onBoundsChange(null);
+            }}
+          >
             清除框选
           </Btn>
         )}
@@ -397,6 +420,7 @@ export function MapPanel({
         {ready && (
           <div className="map-badge-row">
             <Badge tone="accent">已标注 {results.filter((r) => r.location).length} 个点位</Badge>
+            {mode === "polygon" && bounds && <Badge tone="amber">已框选范围</Badge>}
             {mode === "around" && center && <Badge tone="amber">中心点已设置</Badge>}
           </div>
         )}

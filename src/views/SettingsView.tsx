@@ -1,5 +1,9 @@
-/** 设置 —— 高德 Key 配置(界面自助输入)/ 检索配额 / 外观 / 数据管理。 */
-import { useState } from "react";
+/** 设置 —— 高德 Key 配置(界面自助输入)/ 检索配额 / 外观 / 数据管理。
+ *
+ * 所有字段均为受控组件,输入即写入全局状态并自动持久化到本机,
+ * 切换页面 / 重启软件都不会丢失(修复:草稿态丢失导致的"key 被清空")。
+ */
+import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge, Btn, Field, Icon, Input, Switch } from "../components/ui";
 import { useApp } from "../lib/appContext";
@@ -8,36 +12,23 @@ import { testKey, MIN_INTERVAL_MS } from "../lib/amap";
 export function SettingsView() {
   const { settings, updateSettings, toast, usage, resetUsage, clearPool, clearLogs, pool, logs, pushLog } = useApp();
 
-  const [webKey, setWebKey] = useState(settings.webKey);
-  const [jsKey, setJsKey] = useState(settings.jsKey);
-  const [securityJsCode, setSecurityJsCode] = useState(settings.securityJsCode);
-  const [dailyLimit, setDailyLimit] = useState(String(settings.dailyLimit));
+  // 每日限额用本地文本态编辑,失焦/变更即提交,避免数字被逐键打断
+  const [dailyLimitText, setDailyLimitText] = useState(String(settings.dailyLimit));
+  useEffect(() => setDailyLimitText(String(settings.dailyLimit)), [settings.dailyLimit]);
+
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const dirty =
-    webKey !== settings.webKey ||
-    jsKey !== settings.jsKey ||
-    securityJsCode !== settings.securityJsCode ||
-    Number(dailyLimit) !== settings.dailyLimit;
-
-  function save() {
-    const limit = Math.min(Math.max(Number(dailyLimit) || 4500, 100), 100000);
-    updateSettings({ webKey: webKey.trim(), jsKey: jsKey.trim(), securityJsCode: securityJsCode.trim(), dailyLimit: limit });
-    setDailyLimit(String(limit));
-    toast("设置已保存", "success");
-    pushLog({ endpoint: "settings", summary: "更新设置", ok: true, error: "" });
-  }
-
   async function runTest() {
-    if (!webKey.trim()) {
+    const key = settings.webKey.trim();
+    if (!key) {
       setTestResult({ ok: false, msg: "请先填写 Web服务 Key" });
       return;
     }
     setTesting(true);
     setTestResult(null);
     try {
-      const msg = await testKey(webKey.trim());
+      const msg = await testKey(key);
       setTestResult({ ok: true, msg });
       pushLog({ endpoint: "place/text", summary: `Key 连通测试:${msg}`, ok: true, error: "" });
     } catch (e) {
@@ -54,12 +45,10 @@ export function SettingsView() {
       <div className="page-head">
         <div>
           <h1 className="page-title">设置</h1>
-          <p className="page-desc">地图 Key 由你掌控:仅保存在本机,不上传任何服务器</p>
+          <p className="page-desc">地图 Key 由你掌控:输入即自动保存到本机,不上传任何服务器</p>
         </div>
         <div className="head-actions">
-          <Btn variant="primary" disabled={!dirty} onClick={save}>
-            {Icon.check({ size: 15 })} 保存设置
-          </Btn>
+          <Badge tone="accent">{Icon.check({ size: 13 })} 自动保存</Badge>
         </div>
       </div>
 
@@ -74,17 +63,17 @@ export function SettingsView() {
             用于 POI 检索、详情与地址定位。请在高德开放平台 → 控制台 → 应用管理 创建「Web服务」类型的 Key。
           </p>
           <div className="setting-stack">
-            <Field label="Key" hint="仅存本机 localStorage,不会上传">
+            <Field label="Key" hint="改动即时生效并保存到本机">
               <Input
                 className="input key-field"
                 type="password"
-                value={webKey}
+                value={settings.webKey}
                 placeholder="如: a1b2c3d4e5f6…"
-                onChange={(e) => setWebKey(e.target.value)}
+                onChange={(e) => updateSettings({ webKey: e.target.value })}
               />
             </Field>
             <div className="row">
-              <Btn onClick={() => void runTest()} disabled={testing || !webKey.trim()}>
+              <Btn onClick={() => void runTest()} disabled={testing || !settings.webKey.trim()}>
                 {testing ? Icon.spinner({ size: 14, className: "spin" }) : Icon.refresh({ size: 14 })}
                 测试连接
               </Btn>
@@ -126,18 +115,18 @@ export function SettingsView() {
               <Input
                 className="input key-field"
                 type="password"
-                value={jsKey}
+                value={settings.jsKey}
                 placeholder="Web端(JS API)类型的 Key"
-                onChange={(e) => setJsKey(e.target.value)}
+                onChange={(e) => updateSettings({ jsKey: e.target.value })}
               />
             </Field>
             <Field label="安全密钥 securityJsCode(可选)" hint="高德控制台 → Key 详情中查看">
               <Input
                 className="input key-field"
                 type="password"
-                value={securityJsCode}
+                value={settings.securityJsCode}
                 placeholder="留空亦可(旧版 Key)"
-                onChange={(e) => setSecurityJsCode(e.target.value)}
+                onChange={(e) => updateSettings({ securityJsCode: e.target.value })}
               />
             </Field>
             <div className="field-hint">
@@ -158,8 +147,12 @@ export function SettingsView() {
                 type="number"
                 min={100}
                 max={100000}
-                value={dailyLimit}
-                onChange={(e) => setDailyLimit(e.target.value)}
+                value={dailyLimitText}
+                onChange={(e) => {
+                  setDailyLimitText(e.target.value);
+                  const n = Number(e.target.value);
+                  if (Number.isFinite(n) && n > 0) updateSettings({ dailyLimit: Math.min(Math.floor(n), 100000) });
+                }}
               />
             </Field>
             <div className="kv-row">
@@ -206,7 +199,7 @@ export function SettingsView() {
         <div className="card full">
           <h2 className="setting-title">{Icon.layers({ size: 17 })} 数据管理</h2>
           <p className="setting-desc">
-            所有数据仅存本机(客户池 / 调用日志 / 设置)。商户原始检索结果为临时数据,不做云端沉淀 —— 关闭软件即释放。
+            所有数据仅存本机(客户池 / 调用日志 / 设置)。商户原始检索结果为临时数据,不做云端沉淀。
           </p>
           <div className="row" style={{ flexWrap: "wrap" }}>
             <div className="kv-row" style={{ border: 0, padding: 0, gap: 8 }}>
@@ -249,7 +242,7 @@ export function SettingsView() {
             遵守高德开放平台协议:仅人工发起检索、结果人工筛选、支持一键清空,禁止构建全量商户数据库。
           </p>
           <div className="row">
-            <Badge tone="accent">v0.1.0</Badge>
+            <Badge tone="accent">v0.1.1</Badge>
             <Badge tone="info">Windows / macOS / Linux</Badge>
             <Badge tone="violet">Tauri 2 · 轻量内核</Badge>
             <div className="spacer" />

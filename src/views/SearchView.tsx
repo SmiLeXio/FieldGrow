@@ -15,7 +15,7 @@ const MODES: { key: SearchMode; label: string; desc: string }[] = [
   { key: "around", label: "周边检索", desc: "中心点 + 半径,围绕地标/门店扫街" },
 ];
 
-export function SearchView() {
+export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
   const { settings, pushLog, consumeQuota, toast, addToPool, inPool, usage } = useApp();
 
   const [mode, setMode] = useState<SearchMode>("text");
@@ -210,6 +210,19 @@ export function SearchView() {
       </div>
 
       {/* —— 检索工具栏 —— */}
+      {!settings.webKey && (
+        <div
+          className="row card card-pad"
+          style={{ borderColor: "rgba(245,181,68,.35)", background: "var(--amber-soft)", color: "var(--amber)", gap: 10 }}
+        >
+          {Icon.alert({ size: 16 })}
+          <span style={{ fontWeight: 600 }}>尚未配置高德 Web服务 Key,无法发起检索</span>
+          <div className="spacer" />
+          <Btn size="sm" onClick={onGoSettings}>
+            {Icon.gear({ size: 13 })} 去设置
+          </Btn>
+        </div>
+      )}
       <div className="card card-pad search-bar">
         <div className="segmented" role="tablist">
           {MODES.map((m) => (

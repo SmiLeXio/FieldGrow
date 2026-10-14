@@ -84,6 +84,14 @@ select {
   overflow: hidden;
 }
 
+/* 视图容器:所有视图常驻挂载,仅切换显示 —— 保证页面间状态不丢失 */
+.view-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ————— 侧边栏 ————— */
 
 .sidebar {
@@ -635,13 +643,13 @@ table.data thead th {
   letter-spacing: 0.6px;
   text-transform: uppercase;
   text-align: left;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
 table.data tbody td {
-  padding: 9px 12px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--line);
   color: var(--text-1);
   vertical-align: middle;
@@ -794,25 +802,29 @@ table.data tbody tr:last-child td {
 }
 
 .workspace .table-wrap {
-  flex: 1;
+  flex: 0 1 40%;
+  min-width: 320px;
   display: flex;
   flex-direction: column;
 }
 
 .map-panel {
-  width: 400px;
-  flex-shrink: 0;
+  width: auto;
+  flex: 1 1 55%;
+  min-width: 420px;
   display: flex;
   flex-direction: column;
   border-radius: var(--r-lg);
   border: 1px solid var(--line);
   background: var(--bg-1);
   overflow: hidden;
-  transition: width 260ms var(--ease), opacity 260ms var(--ease);
+  transition: flex-basis 260ms var(--ease), min-width 260ms var(--ease), opacity 260ms var(--ease);
 }
 
 .map-panel.collapsed {
   width: 0;
+  min-width: 0;
+  flex: 0 0 0;
   opacity: 0;
   border: 0;
   pointer-events: none;
