@@ -84,22 +84,33 @@ export interface LogEntry {
   error: string;
 }
 
-export interface Settings {
-  /** 高德「Web服务」Key —— 检索/详情/地理编码 */
-  webKey: string;
-  /** 高德「Web端(JS API)」Key —— 地图可视化(可选) */
-  jsKey: string;
-  /** JS API 安全密钥(可选,新版 Key 在高德控制台查看) */
+/** 一条高德 Key 配置(支持多 Key 并存、随时切换) */
+export interface ApiKeyEntry {
+  id: string;
+  /** 备注名,如「公司账号」「个人备用」 */
+  name: string;
+  key: string;
+  /** 仅「Web端(JS API)」Key 用:安全密钥 securityJsCode(可空) */
   securityJsCode: string;
+}
+
+export interface Settings {
+  /** 高德「Web服务」Key 列表 —— 检索/详情/地理编码 */
+  webKeys: ApiKeyEntry[];
+  activeWebKeyId: string;
+  /** 高德「Web端(JS API)」Key 列表 —— 地图可视化(可选) */
+  jsKeys: ApiKeyEntry[];
+  activeJsKeyId: string;
   /** 每日调用上限(合规:到顶自动停止检索) */
   dailyLimit: number;
   theme: "dark" | "light";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  webKey: "",
-  jsKey: "",
-  securityJsCode: "",
+  webKeys: [],
+  activeWebKeyId: "",
+  jsKeys: [],
+  activeJsKeyId: "",
   dailyLimit: 4500,
   theme: "dark",
 };

@@ -1,51 +1,243 @@
-/** 设置 —— 高德 Key 配置(界面自助输入)/ 检索配额 / 外观 / 数据管理。
+/** 设置 —— 多 Key 管理(添加/切换/测试/删除)/ 检索配额 / 外观 / 数据管理。
  *
- * 所有字段均为受控组件,输入即写入全局状态并自动持久化到本机,
- * 切换页面 / 重启软件都不会丢失(修复:草稿态丢失导致的"key 被清空")。
+ * 所有字段均为受控组件,输入即写入全局状态并自动持久化到本机。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge, Btn, Field, Icon, Input, Switch } from "../components/ui";
 import { useApp } from "../lib/appContext";
 import { testKey, MIN_INTERVAL_MS } from "../lib/amap";
+import type { ApiKeyEntry } from "../lib/types";
 
-export function SettingsView() {
-  const { settings, updateSettings, toast, usage, resetUsage, clearPool, clearLogs, pool, logs, pushLog } = useApp();
+function maskKey(key: string): string {
+  const k = (key || "").trim();
+  if (!k) return "—";
+  if (k.length <= 10) return `${k.slice(0, 2)}…`;
+  return `${k.slice(0, 6)}…${k.slice(-4)}`;
+}
 
-  // 每日限额用本地文本态编辑,失焦/变更即提交,避免数字被逐键打断
-  const [dailyLimitText, setDailyLimitText] = useState(String(settings.dailyLimit));
-  useEffect(() => setDailyLimitText(String(settings.dailyLimit)), [settings.dailyLimit]);
+interface TestResult {
+  ok: boolean;
+  msg: string;
+}
 
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+function KeyManager({
+  kind,
+  title,
+  desc,
+  withJsCode,
+}: {
+  kind: "web" | "js";
+  title: ReactNode;
+  desc: string;
+  withJsCode?: boolean;
+}) {
+  const { settings, addApiKey, removeApiKey, setActiveApiKey, pushLog } = useApp();
+  const entries: ApiKeyEntry[] = kind === "web" ? settings.webKeys : settings.jsKeys;
+  const activeId = kind === "web" ? settings.activeWebKeyId : settings.activeJsKeyId;
+  const effectiveActive = entries.find((e) => e.id === activeId)?.id || entries[0]?.id || "";
 
-  async function runTest() {
-    const key = settings.webKey.trim();
-    if (!key) {
-      setTestResult({ ok: false, msg: "请先填写 Web服务 Key" });
+  const [name, setName] = useState("");
+  const [key, setKey] = useState("");
+  const [jsCode, setJsCode] = useState("");
+  const [tests, setTests] = useState<Record<string, TestResult>>({});
+  const [testingId, setTestingId] = useState("");
+
+  async function runTest(entry: ApiKeyEntry) {
+    if (kind !== "web") {
+      // JS Key 无法用 REST 验证,给出使用提示
+      setTests((t) => ({
+        ...t,
+        [entry.id]: { ok: true, msg: "JS Key 将在打开地图时验证;若地图无法加载请检查 Key 类型与域名白名单" },
+      }));
       return;
     }
-    setTesting(true);
-    setTestResult(null);
+    setTestingId(entry.id);
+    setTests((t) => ({ ...t, [entry.id]: { ok: true, msg: "测试中…" } }));
     try {
-      const msg = await testKey(key);
-      setTestResult({ ok: true, msg });
-      pushLog({ endpoint: "place/text", summary: `Key 连通测试:${msg}`, ok: true, error: "" });
+      const msg = await testKey(entry.key);
+      setTests((t) => ({ ...t, [entry.id]: { ok: true, msg } }));
+      pushLog({ endpoint: "place/text", summary: `Key「${entry.name}」测试:${msg}`, ok: true, error: "" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setTestResult({ ok: false, msg });
-      pushLog({ endpoint: "place/text", summary: "Key 连通测试失败", ok: false, error: msg });
+      setTests((t) => ({ ...t, [entry.id]: { ok: false, msg } }));
+      pushLog({ endpoint: "place/text", summary: `Key「${entry.name}」测试失败`, ok: false, error: msg });
     } finally {
-      setTesting(false);
+      setTestingId("");
     }
   }
+
+  function handleAdd() {
+    const k = key.trim();
+    if (!k) return;
+    addApiKey(kind, {
+      name: name.trim() || `Key ${entries.length + 1}`,
+      key: k,
+      securityJsCode: withJsCode ? jsCode.trim() : "",
+    });
+    setName("");
+    setKey("");
+    setJsCode("");
+  }
+
+  return (
+    <div className="card">
+      <h2 className="setting-title">
+        {title}
+        {kind === "web" ? <Badge tone="accent">必需</Badge> : <Badge>可选</Badge>}
+      </h2>
+      <p className="setting-desc">{desc}</p>
+
+      <div className="setting-stack">
+        {entries.length === 0 && (
+          <div className="field-hint" style={{ padding: "6px 0" }}>
+            暂无 Key,请在下方添加。
+          </div>
+        )}
+        {entries.map((entry) => {
+          const isActive = entry.id === effectiveActive;
+          const test = tests[entry.id];
+          return (
+            <div
+              key={entry.id}
+              style={{
+                border: `1px solid ${isActive ? "var(--accent)" : "var(--line)"}`,
+                background: isActive ? "var(--accent-soft)" : "var(--bg-2)",
+                borderRadius: 12,
+                padding: "10px 12px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div className="row" style={{ gap: 10 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    <span style={{ fontWeight: 650, fontSize: 13 }}>{entry.name}</span>
+                    {isActive && <Badge tone="accent">使用中</Badge>}
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--text-2)", marginTop: 2 }}>
+                    {maskKey(entry.key)}
+                    {withJsCode && entry.securityJsCode ? " · 含安全密钥" : ""}
+                  </div>
+                </div>
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  title="测试连通"
+                  disabled={testingId === entry.id}
+                  onClick={() => void runTest(entry)}
+                >
+                  {testingId === entry.id ? Icon.spinner({ size: 13, className: "spin" }) : Icon.refresh({ size: 13 })}
+                  测试
+                </Btn>
+                {!isActive && (
+                  <Btn
+                    size="sm"
+                    onClick={() => {
+                      setActiveApiKey(kind, entry.id);
+                    }}
+                  >
+                    {Icon.check({ size: 13 })} 启用
+                  </Btn>
+                )}
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  title="删除此 Key"
+                  onClick={() => {
+                    if (confirm(`确认删除「${entry.name}」?`)) removeApiKey(kind, entry.id);
+                  }}
+                >
+                  {Icon.trash({ size: 13 })}
+                </Btn>
+              </div>
+              {test && (
+                <div
+                  className="row"
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    background: test.ok ? "var(--accent-soft)" : "var(--danger-soft)",
+                    color: test.ok ? "var(--accent-2)" : "var(--danger)",
+                    fontSize: 11.5,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  {test.ok ? Icon.check({ size: 12 }) : Icon.alert({ size: 12 })}
+                  <span>{test.msg}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* 添加新 Key */}
+        <div className="divider" />
+        <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+          <Field label="备注名">
+            <Input
+              value={name}
+              placeholder={`如:公司账号 / 备用 ${entries.length + 1}`}
+              onChange={(e) => setName(e.target.value)}
+              style={{ width: 150 }}
+            />
+          </Field>
+          <Field label={withJsCode ? "JS Key" : "Key"}>
+            <Input
+              className="key-field"
+              type="password"
+              value={key}
+              placeholder={withJsCode ? "Web端(JS API)类型的 Key" : "Web服务类型的 Key"}
+              onChange={(e) => setKey(e.target.value)}
+              style={{ minWidth: 200 }}
+            />
+          </Field>
+          {withJsCode && (
+            <Field label="安全密钥(可选)">
+              <Input
+                className="key-field"
+                type="password"
+                value={jsCode}
+                placeholder="securityJsCode"
+                onChange={(e) => setJsCode(e.target.value)}
+                style={{ width: 170 }}
+              />
+            </Field>
+          )}
+          <Btn variant="primary" onClick={handleAdd} disabled={!key.trim()}>
+            {Icon.plus({ size: 14 })} 添加
+          </Btn>
+        </div>
+
+        <div className="row" style={{ paddingTop: 2 }}>
+          <Btn variant="ghost" size="sm" onClick={() => void openUrl("https://console.amap.com/dev/key/app")}>
+            {Icon.external({ size: 13 })} 去高德控制台
+          </Btn>
+          {kind === "web" && (
+            <span className="field-hint">
+              配额用完可在列表里一键「启用」其他 Key 继续检索,支持多个 Key 轮换。
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SettingsView() {
+  const { settings, updateSettings, toast, usage, resetUsage, clearPool, clearLogs, pool, logs } = useApp();
+
+  // 每日限额用本地文本态编辑,变更即提交,避免数字被逐键打断
+  const [dailyLimitText, setDailyLimitText] = useState(String(settings.dailyLimit));
+  useEffect(() => setDailyLimitText(String(settings.dailyLimit)), [settings.dailyLimit]);
 
   return (
     <div className="view">
       <div className="page-head">
         <div>
           <h1 className="page-title">设置</h1>
-          <p className="page-desc">地图 Key 由你掌控:输入即自动保存到本机,不上传任何服务器</p>
+          <p className="page-desc">地图 Key 由你掌控:支持多 Key 添加与切换,仅保存在本机,不上传任何服务器</p>
         </div>
         <div className="head-actions">
           <Badge tone="accent">{Icon.check({ size: 13 })} 自动保存</Badge>
@@ -53,87 +245,26 @@ export function SettingsView() {
       </div>
 
       <div className="settings-grid">
-        {/* —— 高德 Key —— */}
-        <div className="card">
-          <h2 className="setting-title">
-            {Icon.target({ size: 17 })} 高德 · Web服务 Key
-            <Badge tone="accent">必需</Badge>
-          </h2>
-          <p className="setting-desc">
-            用于 POI 检索、详情与地址定位。请在高德开放平台 → 控制台 → 应用管理 创建「Web服务」类型的 Key。
-          </p>
-          <div className="setting-stack">
-            <Field label="Key" hint="改动即时生效并保存到本机">
-              <Input
-                className="input key-field"
-                type="password"
-                value={settings.webKey}
-                placeholder="如: a1b2c3d4e5f6…"
-                onChange={(e) => updateSettings({ webKey: e.target.value })}
-              />
-            </Field>
-            <div className="row">
-              <Btn onClick={() => void runTest()} disabled={testing || !settings.webKey.trim()}>
-                {testing ? Icon.spinner({ size: 14, className: "spin" }) : Icon.refresh({ size: 14 })}
-                测试连接
-              </Btn>
-              <Btn variant="ghost" onClick={() => void openUrl("https://console.amap.com/dev/key/app")}>
-                {Icon.external({ size: 13 })} 去高德控制台
-              </Btn>
-            </div>
-            {testResult && (
-              <div
-                className="row"
-                style={{
-                  padding: "9px 12px",
-                  borderRadius: 10,
-                  background: testResult.ok ? "var(--accent-soft)" : "var(--danger-soft)",
-                  color: testResult.ok ? "var(--accent-2)" : "var(--danger)",
-                  fontSize: 12.5,
-                  alignItems: "flex-start",
-                }}
-              >
-                {testResult.ok ? Icon.check({ size: 14 }) : Icon.alert({ size: 14 })}
-                <span>{testResult.msg}</span>
-              </div>
-            )}
-          </div>
-        </div>
+        <KeyManager
+          kind="web"
+          title={
+            <>
+              {Icon.target({ size: 17 })} 高德 · Web服务 Key
+            </>
+          }
+          desc="用于 POI 检索、详情与地址定位。在高德开放平台创建「Web服务」类型的 Key,可添加多个并随时切换。"
+        />
 
-        {/* —— JS 地图 —— */}
-        <div className="card">
-          <h2 className="setting-title">
-            {Icon.map({ size: 17 })} 高德 · 地图可视化(JS API)
-            <Badge>可选</Badge>
-          </h2>
-          <p className="setting-desc">
-            「Web端(JS API)」类型 Key,用于地图打点 / 框选 / 点选中心点。留空则仅使用列表检索,功能不受影响。
-            新版 Key 需同时填安全密钥(securityJsCode)。
-          </p>
-          <div className="setting-stack">
-            <Field label="JS Key">
-              <Input
-                className="input key-field"
-                type="password"
-                value={settings.jsKey}
-                placeholder="Web端(JS API)类型的 Key"
-                onChange={(e) => updateSettings({ jsKey: e.target.value })}
-              />
-            </Field>
-            <Field label="安全密钥 securityJsCode(可选)" hint="高德控制台 → Key 详情中查看">
-              <Input
-                className="input key-field"
-                type="password"
-                value={settings.securityJsCode}
-                placeholder="留空亦可(旧版 Key)"
-                onChange={(e) => updateSettings({ securityJsCode: e.target.value })}
-              />
-            </Field>
-            <div className="field-hint">
-              提示:JS Key 若绑定了域名白名单,桌面端环境可能无法加载地图;建议新建一个不绑定域名的 Key 供桌面端使用。
-            </div>
-          </div>
-        </div>
+        <KeyManager
+          kind="js"
+          withJsCode
+          title={
+            <>
+              {Icon.map({ size: 17 })} 高德 · 地图可视化(JS API)
+            </>
+          }
+          desc="「Web端(JS API)」类型 Key,用于地图打点 / 框选 / 点选中心点。留空则仅使用列表检索,功能不受影响;新版 Key 建议同时填安全密钥。"
+        />
 
         {/* —— 检索与配额 —— */}
         <div className="card">
@@ -242,7 +373,7 @@ export function SettingsView() {
             遵守高德开放平台协议:仅人工发起检索、结果人工筛选、支持一键清空,禁止构建全量商户数据库。
           </p>
           <div className="row">
-            <Badge tone="accent">v0.2.2</Badge>
+            <Badge tone="accent">v0.2.3</Badge>
             <Badge tone="info">Windows / macOS / Linux</Badge>
             <Badge tone="violet">Tauri 2 · 轻量内核</Badge>
             <div className="spacer" />

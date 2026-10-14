@@ -38,7 +38,40 @@ function save(key: string, value: unknown) {
 }
 
 export function loadSettings(): Settings {
-  return load<Settings>(K.settings, DEFAULT_SETTINGS);
+  let raw: Record<string, unknown> | null = null;
+  try {
+    const text = localStorage.getItem(K.settings);
+    raw = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+  } catch {
+    raw = null;
+  }
+  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
+
+  // 新版多 Key 结构
+  if (Array.isArray(raw.webKeys) || Array.isArray(raw.jsKeys)) {
+    const s = { ...DEFAULT_SETTINGS, ...raw } as Settings;
+    s.webKeys = Array.isArray(raw.webKeys) ? (raw.webKeys as Settings["webKeys"]) : [];
+    s.jsKeys = Array.isArray(raw.jsKeys) ? (raw.jsKeys as Settings["jsKeys"]) : [];
+    if (!s.webKeys.some((k) => k.id === s.activeWebKeyId)) s.activeWebKeyId = s.webKeys[0]?.id || "";
+    if (!s.jsKeys.some((k) => k.id === s.activeJsKeyId)) s.activeJsKeyId = s.jsKeys[0]?.id || "";
+    return s;
+  }
+
+  // 旧版单 Key → 多 Key 迁移
+  const webKey = String((raw as Record<string, unknown>).webKey || "").trim();
+  const jsKey = String((raw as Record<string, unknown>).jsKey || "").trim();
+  const jsCode = String((raw as Record<string, unknown>).securityJsCode || "").trim();
+  const webKeys = webKey ? [{ id: "legacy-web", name: "默认 Key", key: webKey, securityJsCode: "" }] : [];
+  const jsKeys = jsKey ? [{ id: "legacy-js", name: "默认地图 Key", key: jsKey, securityJsCode: jsCode }] : [];
+  return {
+    ...DEFAULT_SETTINGS,
+    webKeys,
+    activeWebKeyId: webKeys[0]?.id || "",
+    jsKeys,
+    activeJsKeyId: jsKeys[0]?.id || "",
+    dailyLimit: Number(raw.dailyLimit) || DEFAULT_SETTINGS.dailyLimit,
+    theme: raw.theme === "light" ? "light" : "dark",
+  };
 }
 
 export function saveSettings(s: Settings) {

@@ -99,7 +99,7 @@ export function MapCanvas({
   viewRequest,
   onDrawStateChange,
 }: MapCanvasProps) {
-  const { settings, theme } = useApp();
+  const { activeJsKey, activeJsCode, theme } = useApp();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
@@ -114,7 +114,7 @@ export function MapCanvas({
   const [error, setError] = useState("");
   const [loadingMap, setLoadingMap] = useState(false);
 
-  const hasJsKey = Boolean(settings.jsKey);
+  const hasJsKey = Boolean(activeJsKey);
 
   /* —— 初始化地图 —— */
   useEffect(() => {
@@ -125,7 +125,7 @@ export function MapCanvas({
       setLoadingMap(true);
       setError("");
       try {
-        const AMap = await loadAMapScript(settings.jsKey, settings.securityJsCode);
+        const AMap = await loadAMapScript(activeJsKey, activeJsCode);
         if (disposed || !containerRef.current) return;
         if (mapRef.current) {
           setReady(true);
@@ -152,7 +152,7 @@ export function MapCanvas({
       disposed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasJsKey, settings.jsKey]);
+  }, [hasJsKey, activeJsKey]);
 
   /* —— 容器尺寸变化后刷新地图 —— */
   useEffect(() => {
@@ -452,7 +452,7 @@ export function MapCanvas({
     setReady(false);
     setError("");
     setLoadingMap(true);
-    loadAMapScript(settings.jsKey, settings.securityJsCode)
+    loadAMapScript(activeJsKey, activeJsCode)
       .then((AMap) => {
         if (!containerRef.current) return;
         mapRef.current = new AMap.Map(containerRef.current, {

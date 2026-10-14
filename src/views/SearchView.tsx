@@ -30,7 +30,7 @@ const MODES: { key: SearchMode; label: string }[] = [
 ];
 
 export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
-  const { settings, pushLog, consumeQuota, toast, addToPool, inPool, usage } = useApp();
+  const { settings, activeWebKey, pushLog, consumeQuota, toast, addToPool, inPool, usage } = useApp();
 
   /* —— 检索参数 —— */
   const [mode, setMode] = useState<SearchMode>("text");
@@ -80,13 +80,13 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
 
   /* —— 区县列表:随城市输入自动加载;地图自动跳转到城市中心 —— */
   useEffect(() => {
-    if (!settings.webKey || !region.trim()) {
+    if (!activeWebKey || !region.trim()) {
       setDistricts([]);
       return;
     }
     let alive = true;
     const timer = window.setTimeout(() => {
-      fetchDistricts(region.trim(), settings.webKey)
+      fetchDistricts(region.trim(), activeWebKey)
         .then((q) => {
           if (!alive) return;
           setDistricts(q.districts);
@@ -104,7 +104,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [region, settings.webKey]);
+  }, [region, activeWebKey]);
 
   const kwCount = splitKeywords(keywords).length;
   const selectedItems = useMemo(() => results.filter((r) => selected.has(r.poiId)), [results, selected]);
@@ -113,7 +113,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
 
   /* —————— 检索(多页累加 / 网格深扫)— —————— */
   async function doSearch(action: "new" | "more") {
-    if (!settings.webKey) {
+    if (!activeWebKey) {
       toast("请先在「设置」中填写高德 Web服务 Key", "error");
       onGoSettings?.();
       return;
@@ -166,7 +166,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       // 周边模式:必要时定位中心点(深扫需以中心点画圆取外接矩形)
       if (mode === "around" && !baseQuery.center) {
         setLoadingLabel("正在定位中心点");
-        const loc = await geocode(centerAddr.trim(), settings.webKey, region);
+        const loc = await geocode(centerAddr.trim(), activeWebKey, region);
         setCenter(loc);
         baseQuery.center = loc;
       }
@@ -193,7 +193,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         const cells = splitBoundsGrid(scanBounds, gridN);
         for (let i = 0; i < cells.length; i++) {
           setLoadingLabel(`网格深扫 ${i + 1}/${cells.length} 区`);
-          const r = await searchPoiPages({ ...baseQuery, mode: "polygon", bounds: cells[i] }, settings.webKey, {
+          const r = await searchPoiPages({ ...baseQuery, mode: "polygon", bounds: cells[i] }, activeWebKey, {
             fromPage: 1,
             pageCount: fetchPages,
           });
@@ -203,7 +203,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         const fromPage = action === "new" ? 1 : loadedPages + 1;
         for (let p = 0; p < fetchPages; p++) {
           setLoadingLabel(`正在抓取第 ${fromPage + p} 页`);
-          const r = await searchPoiPages(baseQuery, settings.webKey, {
+          const r = await searchPoiPages(baseQuery, activeWebKey, {
             fromPage: fromPage + p,
             pageCount: 1,
           });
@@ -728,7 +728,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         </div>
 
         {/* —— 未配置 Key 提示 —— */}
-        {!settings.webKey && (
+        {!activeWebKey && (
           <div
             className="row glass"
             style={{
@@ -751,7 +751,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       {detailPoi && (
         <DetailModal
           poi={detailPoi}
-          webKey={settings.webKey}
+          webKey={activeWebKey}
           inPool={inPool(detailPoi)}
           onAddPool={(item) => addSelectedToPool([item])}
           onClose={() => setDetailPoi(null)}

@@ -19,7 +19,7 @@ import {
   saveSettings,
   saveUsage,
 } from "./store";
-import type { LogEntry, PoiItem, PoolItem, PoolStatus, Settings } from "./types";
+import type { ApiKeyEntry, LogEntry, PoiItem, PoolItem, PoolStatus, Settings } from "./types";
 
 export type ToastKind = "info" | "success" | "error";
 interface Toast {
@@ -32,6 +32,16 @@ interface AppCtx {
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
   theme: "dark" | "light";
+
+  /** 当前生效的 Web服务 Key(检索/详情/定位) */
+  activeWebKey: string;
+  /** 当前生效的 JS 地图 Key + 安全密钥 */
+  activeJsKey: string;
+  activeJsCode: string;
+  /** Key 管理:增 / 删 / 切换 */
+  addApiKey: (kind: "web" | "js", entry: Omit<ApiKeyEntry, "id">) => void;
+  removeApiKey: (kind: "web" | "js", id: string) => void;
+  setActiveApiKey: (kind: "web" | "js", id: string) => void;
 
   pool: PoolItem[];
   addToPool: (items: PoiItem[]) => number;
@@ -93,6 +103,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((s) => ({ ...s, ...patch }));
   }, []);
+
+  /* —— 多 Key 管理 —— */
+  const addApiKey = useCallback((kind: "web" | "js", entry: Omit<ApiKeyEntry, "id">) => {
+    setSettings((s) => {
+      const id = `${kind}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      const item: ApiKeyEntry = { ...entry, id };
+      if (kind === "web") {
+        const webKeys = [...s.webKeys, item];
+        return { ...s, webKeys, activeWebKeyId: s.activeWebKeyId || id };
+      }
+      const jsKeys = [...s.jsKeys, item];
+      return { ...s, jsKeys, activeJsKeyId: s.activeJsKeyId || id };
+    });
+  }, []);
+
+  const removeApiKey = useCallback((kind: "web" | "js", id: string) => {
+    setSettings((s) => {
+      if (kind === "web") {
+        const webKeys = s.webKeys.filter((k) => k.id !== id);
+        return {
+          ...s,
+          webKeys,
+          activeWebKeyId: s.activeWebKeyId === id ? webKeys[0]?.id || "" : s.activeWebKeyId,
+        };
+      }
+      const jsKeys = s.jsKeys.filter((k) => k.id !== id);
+      return {
+        ...s,
+        jsKeys,
+        activeJsKeyId: s.activeJsKeyId === id ? jsKeys[0]?.id || "" : s.activeJsKeyId,
+      };
+    });
+  }, []);
+
+  const setActiveApiKey = useCallback((kind: "web" | "js", id: string) => {
+    setSettings((s) =>
+      kind === "web" ? { ...s, activeWebKeyId: id } : { ...s, activeJsKeyId: id },
+    );
+  }, []);
+
+  const activeWebKey =
+    settings.webKeys.find((k) => k.id === settings.activeWebKeyId)?.key || settings.webKeys[0]?.key || "";
+  const activeJsEntry =
+    settings.jsKeys.find((k) => k.id === settings.activeJsKeyId) || settings.jsKeys[0];
+  const activeJsKey = activeJsEntry?.key || "";
+  const activeJsCode = activeJsEntry?.securityJsCode || "";
 
   const inPool = useCallback(
     (it: PoiItem) => {
@@ -180,6 +236,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       settings,
       updateSettings,
       theme: settings.theme,
+      activeWebKey,
+      activeJsKey,
+      activeJsCode,
+      addApiKey,
+      removeApiKey,
+      setActiveApiKey,
       pool,
       addToPool,
       updatePoolItem,
@@ -197,7 +259,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dismissToast,
     }),
     [
-      settings, updateSettings, pool, addToPool, updatePoolItem, removeFromPool, clearPool,
+      settings, updateSettings, activeWebKey, activeJsKey, activeJsCode,
+      addApiKey, removeApiKey, setActiveApiKey,
+      pool, addToPool, updatePoolItem, removeFromPool, clearPool,
       inPool, logs, pushLog, clearLogs, usage, consumeQuota, resetUsage, toast, toasts, dismissToast,
     ],
   );

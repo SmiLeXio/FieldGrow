@@ -13,7 +13,7 @@ const NAV: { key: ViewKey; label: string; icon: (p?: { size?: number }) => React
 ];
 
 export function Sidebar({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => void }) {
-  const { pool, usage, settings, theme, updateSettings, logs } = useApp();
+  const { pool, usage, settings, activeWebKey, theme, updateSettings, logs } = useApp();
   const pct = Math.min(100, Math.round((usage / Math.max(settings.dailyLimit, 1)) * 100));
 
   const badges: Partial<Record<ViewKey, number>> = {
@@ -57,7 +57,7 @@ export function Sidebar({ view, onChange }: { view: ViewKey; onChange: (v: ViewK
         </div>
         <div className="row" style={{ marginTop: 12, justifyContent: "space-between" }}>
           <span style={{ fontSize: 10.5, color: "var(--text-3)", letterSpacing: 0.4 }}>
-            {settings.webKey ? "KEY 已配置" : "KEY 未配置"}
+            {activeWebKey ? "KEY 已配置" : "KEY 未配置"}
           </span>
           <Btn
             size="sm"

@@ -8,11 +8,11 @@ import { SettingsView } from "./views/SettingsView";
 
 function Shell() {
   const [view, setView] = useState<ViewKey>("search");
-  const { settings, toast } = useApp();
+  const { activeWebKey, toast } = useApp();
 
   // 首次进入且未配置 Key 时,引导用户去设置
   useState(() => {
-    if (!settings.webKey) {
+    if (!activeWebKey) {
       setTimeout(() => toast("欢迎使用 FieldGrow — 请先在「设置」中填写高德 Web服务 Key", "info"), 600);
     }
   });
