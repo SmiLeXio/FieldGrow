@@ -1,23 +1,34 @@
-/** 检索视图 —— 多模式 POI 检索:关键词 / 矩形框选 / 周边,结果管理与导出。 */
-import { useMemo, useRef, useState } from "react";
+/** 检索视图 —— 地图为主体:检索栏/商户列表/工具条/门店卡全部悬浮在地图之上。
+ *
+ * 检索为「多页累加」模型:每次抓取 1~5 页,支持加载更多;框选模式可网格深扫,
+ * 把一片区域拆成小格逐格检索,突破单次检索的截断上限。
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DetailModal } from "../components/DetailModal";
-import { MapPanel } from "../components/MapPanel";
+import { MapCanvas } from "../components/MapPanel";
 import { Badge, Btn, Empty, Field, Icon, Input, Select, Switch } from "../components/ui";
 import { useApp } from "../lib/appContext";
-import { AmapError, geocode, MAX_KEYWORDS, searchPoi, splitKeywords } from "../lib/amap";
+import {
+  geocode,
+  searchPoiPages,
+  splitBoundsGrid,
+  splitKeywords,
+  type SearchPagesResult,
+} from "../lib/amap";
 import { exportRows, poiColumns } from "../lib/export";
 import { fmtRating, telTypeLabel } from "../lib/format";
 import type { Bounds, PoiItem, SearchMode, SearchQuery } from "../lib/types";
 
-const MODES: { key: SearchMode; label: string; desc: string }[] = [
-  { key: "text", label: "关键词检索", desc: "城市 + 关键词,快速铺开目标区域" },
-  { key: "polygon", label: "区域框选", desc: "地图拖拽框选矩形范围,精确圈定商圈" },
-  { key: "around", label: "周边检索", desc: "中心点 + 半径,围绕地标/门店扫街" },
+const MODES: { key: SearchMode; label: string }[] = [
+  { key: "text", label: "关键词" },
+  { key: "polygon", label: "区域框选" },
+  { key: "around", label: "周边" },
 ];
 
 export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
   const { settings, pushLog, consumeQuota, toast, addToPool, inPool, usage } = useApp();
 
+  /* —— 检索参数 —— */
   const [mode, setMode] = useState<SearchMode>("text");
   const [keywords, setKeywords] = useState("咖啡店");
   const [region, setRegion] = useState("北京市");
@@ -27,27 +38,57 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
   const [center, setCenter] = useState("");
   const [radius, setRadius] = useState(1000);
   const [pageSize, setPageSize] = useState(20);
+  const [fetchPages, setFetchPages] = useState(2);
+  const [gridN, setGridN] = useState(1);
   const [onlyWithTel, setOnlyWithTel] = useState(true);
 
+  /* —— 结果状态 —— */
   const [results, setResults] = useState<PoiItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [loadedPages, setLoadedPages] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [focusPoi, setFocusPoi] = useState<PoiItem | null>(null);
   const [detailPoi, setDetailPoi] = useState<PoiItem | null>(null);
-  const [showMap, setShowMap] = useState(true);
-  const [activePoiId, setActivePoiId] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
 
-  const queryRef = useRef<SearchQuery | null>(null);
+  /* —— 地图与悬浮层 —— */
+  const [showList, setShowList] = useState(true);
+  const [drawing, setDrawing] = useState(false);
+  const [drawReq, setDrawReq] = useState(0);
+  const [clearReq, setClearReq] = useState(0);
+  const [fitReq, setFitReq] = useState(0);
+  const [searchH, setSearchH] = useState(96);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = searchRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSearchH(el.offsetHeight + 24));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const kwCount = splitKeywords(keywords).length;
   const selectedItems = useMemo(() => results.filter((r) => selected.has(r.poiId)), [results, selected]);
   const withTelCount = useMemo(() => results.filter((r) => r.tel).length, [results]);
+  const gridCost = gridN > 1 ? gridN * gridN * Math.max(kwCount, 1) : 0;
 
-  function buildQuery(pageNo: number): SearchQuery {
-    return {
+  /* —————— 检索(多页累加 / 网格深扫)— —————— */
+  async function doSearch(action: "new" | "more") {
+    if (!settings.webKey) {
+      toast("请先在「设置」中填写高德 Web服务 Key", "error");
+      onGoSettings?.();
+      return;
+    }
+    if (usage >= settings.dailyLimit) {
+      toast(`今日 API 配额已用完(${settings.dailyLimit} 次),请在「设置」中调整上限或明日再试`, "error");
+      return;
+    }
+
+    const baseQuery: SearchQuery = {
       mode,
       keywords,
       region,
@@ -55,70 +96,135 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       bounds,
       center,
       radius,
-      page: pageNo,
+      page: 1,
       pageSize,
       onlyWithTel,
     };
-  }
 
-  async function runSearch(pageNo: number) {
-    if (!settings.webKey) {
-      toast("请先在「设置」中填写高德 Web服务 Key", "error");
+    // 周边模式:未定位中心点则先地理编码
+    if (mode === "around" && !center) {
+      if (!centerAddr.trim()) {
+        toast("请填写中心点地址/地标,或直接在地图上点选中心点", "error");
+        return;
+      }
+    }
+    if (mode === "polygon" && !bounds) {
+      toast("请先在地图上框选范围(右侧工具条第一个按钮)", "error");
       return;
     }
-    if (usage >= settings.dailyLimit) {
-      toast(`今日 API 配额已用完(${settings.dailyLimit} 次),请在「设置」中调整上限或明日再试`, "error");
-      return;
+
+    const isGrid = action === "new" && mode === "polygon" && gridN > 1 && bounds;
+    if (isGrid) {
+      const cost = gridCost * fetchPages;
+      const ok = window.confirm(
+        `网格深扫:${gridN}×${gridN} = ${gridN * gridN} 个子区域 × ${kwCount} 个关键词\n` +
+          `预计消耗约 ${cost} 次配额(今日剩余 ${Math.max(0, settings.dailyLimit - usage)}),是否继续?`,
+      );
+      if (!ok) return;
     }
-    const q = buildQuery(pageNo);
+
     setLoading(true);
     try {
-      // 周边模式:中心点未定位时,先对地址/地标做地理编码
-      if (q.mode === "around" && !q.center) {
-        if (!centerAddr.trim()) throw new AmapError("请填写中心点地址/地标,或直接在地图上点选中心点");
-        const loc = await geocode(centerAddr.trim(), settings.webKey, region);
-        setCenter(loc);
-        q.center = loc;
+      const merged: PoiItem[] = [];
+      const seen = new Set<string>();
+      let calls = 0;
+      let apiTotal = 0;
+
+      const absorb = (r: SearchPagesResult) => {
+        calls += r.calls;
+        apiTotal = Math.max(apiTotal, r.total);
+        for (const it of r.items) {
+          if (seen.has(it.poiId)) continue;
+          seen.add(it.poiId);
+          merged.push(it);
+        }
+      };
+
+      if (isGrid && bounds) {
+        const cells = splitBoundsGrid(bounds, gridN);
+        for (let i = 0; i < cells.length; i++) {
+          setLoadingLabel(`网格深扫 ${i + 1}/${cells.length} 区`);
+          const r = await searchPoiPages({ ...baseQuery, bounds: cells[i] }, settings.webKey, {
+            fromPage: 1,
+            pageCount: fetchPages,
+          });
+          absorb(r);
+        }
+      } else {
+        // 周边模式:必要时定位中心点
+        if (mode === "around" && !baseQuery.center) {
+          setLoadingLabel("正在定位中心点");
+          const loc = await geocode(centerAddr.trim(), settings.webKey, region);
+          setCenter(loc);
+          baseQuery.center = loc;
+        }
+        const fromPage = action === "new" ? 1 : loadedPages + 1;
+        const pageCount = fetchPages;
+        for (let p = 0; p < pageCount; p++) {
+          setLoadingLabel(`正在抓取第 ${fromPage + p} 页`);
+          const r = await searchPoiPages(baseQuery, settings.webKey, {
+            fromPage: fromPage + p,
+            pageCount: 1,
+          });
+          absorb(r);
+          if (r.items.length === 0 && r.pagesFetched > 0) break;
+        }
       }
 
-      const resp = await searchPoi(q, settings.webKey);
-      queryRef.current = q;
-      setResults(resp.items);
-      setTotal(resp.total);
-      setPage(pageNo);
-      setSearched(true);
-      setSelected(new Set());
-      setActivePoiId(null);
+      // 配额记账
+      for (let i = 0; i < calls; i++) consumeQuota();
 
-      // 配额记账(每个关键词计 1 次调用)
-      for (const _kw of resp.keywords) consumeQuota();
+      // 合并到结果
+      const finalItems =
+        action === "more"
+          ? (() => {
+              const map = new Map(results.map((r) => [r.poiId, r] as const));
+              for (const it of merged) map.set(it.poiId, it);
+              return [...map.values()];
+            })()
+          : merged;
+
+      setResults(finalItems);
+      setTotal(Math.max(apiTotal, finalItems.length));
+      setSearched(true);
+      setExhausted(merged.length === 0);
+      if (action === "new") {
+        setLoadedPages(isGrid ? 1 : fetchPages);
+        setSelected(new Set());
+        setFocusPoi(null);
+      } else {
+        setLoadedPages((n) => n + fetchPages);
+      }
+      setFitReq((n) => n + 1);
 
       pushLog({
-        endpoint: q.mode === "text" ? "place/text" : q.mode === "polygon" ? "place/polygon" : "place/around",
-        summary: `检索[${resp.keywords.join("+")}] 命中${resp.total}条/本页${resp.items.length}条`,
+        endpoint: mode === "text" ? "place/text" : mode === "polygon" ? "place/polygon" : "place/around",
+        summary:
+          (isGrid ? `网格深扫${gridN}×${gridN}` : `检索[${splitKeywords(keywords).join("+")}]`) +
+          ` 新增${merged.length}条/累计${finalItems.length}条`,
         ok: true,
         error: "",
       });
 
-      if (!resp.items.length) {
-        toast("本页没有匹配结果,可换关键词或扩大范围", "info");
+      if (!merged.length) {
+        toast(
+          action === "more" ? "没有更多结果了(高德对单次检索总量有截断,可试试网格深扫或更细关键词)" : "没有匹配结果,可换关键词或扩大范围",
+          "info",
+        );
       } else {
-        toast(`检索完成:本页 ${resp.items.length} 条`, "success");
+        toast(`新增 ${merged.length} 条,累计 ${finalItems.length} 条`, "success");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      pushLog({
-        endpoint: `place/${q.mode === "text" ? "text" : q.mode}`,
-        summary: `检索[${keywords}] 失败`,
-        ok: false,
-        error: msg,
-      });
+      pushLog({ endpoint: `place/${mode}`, summary: "检索失败", ok: false, error: msg });
       toast(msg, "error");
     } finally {
       setLoading(false);
+      setLoadingLabel("");
     }
   }
 
+  /* —————— 选择 / 收藏 / 导出 —————— */
   function toggleSelect(poiId: string) {
     setSelected((s) => {
       const next = new Set(s);
@@ -132,383 +238,49 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
     setSelected((s) => (s.size === results.length && results.length > 0 ? new Set() : new Set(results.map((r) => r.poiId))));
   }
 
-  async function handleExport(onlySelected: boolean) {
+  async function handleExport(onlySelected: boolean, fmt: "xlsx" | "csv" = "xlsx") {
     const rows = onlySelected ? selectedItems : results;
     if (!rows.length) {
       toast(onlySelected ? "请先勾选要导出的商户" : "当前没有可导出的结果", "error");
       return;
     }
-    setExporting(true);
     try {
-      const ok = await exportRows(rows, poiColumns<PoiItem>(), "xlsx", "商户检索结果");
+      const ok = await exportRows(rows, poiColumns<PoiItem>(), fmt, "商户检索结果");
       if (ok) {
         toast(`已导出 ${rows.length} 条商户数据`, "success");
-        pushLog({ endpoint: "export", summary: `导出商户 ${rows.length} 条(xlsx)`, ok: true, error: "" });
+        pushLog({ endpoint: "export", summary: `导出商户 ${rows.length} 条(${fmt})`, ok: true, error: "" });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast(msg, "error");
       pushLog({ endpoint: "export", summary: "导出失败", ok: false, error: msg });
-    } finally {
-      setExporting(false);
     }
   }
 
-  async function handleExportCsv() {
-    const rows = selectedItems.length ? selectedItems : results;
-    if (!rows.length) {
-      toast("当前没有可导出的结果", "error");
-      return;
-    }
-    try {
-      const ok = await exportRows(rows, poiColumns<PoiItem>(), "csv", "商户检索结果");
-      if (ok) toast(`已导出 ${rows.length} 条(CSV)`, "success");
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "error");
-    }
-  }
-
-  function addSelectedToPool() {
-    const rows = selectedItems.length ? selectedItems : [];
-    if (!rows.length) {
-      toast("请先勾选要收藏的商户", "error");
-      return;
-    }
-    const added = addToPool(rows);
+  function addSelectedToPool(items: PoiItem[]) {
+    const added = addToPool(items);
     toast(added ? `已加入客户池 ${added} 家` : "所选商户均已在客户池中", added ? "success" : "info");
   }
 
-  function nextPage() {
-    const p = page + 1;
-    void runSearch(p);
-  }
-
-  function prevPage() {
-    if (page <= 1) return;
-    void runSearch(page - 1);
+  async function copyTel(tel: string) {
+    try {
+      await navigator.clipboard.writeText(tel);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = tel;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    toast(`已复制电话 ${tel}`, "success");
   }
 
   return (
-    <div className="view">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">商户检索</h1>
-          <p className="page-desc">
-            多关键词 × 多种区域方式,一键触达目标商户 · 单页最多 50 条 · 仅人工发起检索(合规设计)
-          </p>
-        </div>
-        <div className="head-actions">
-          <Btn variant="ghost" onClick={() => setShowMap((v) => !v)}>
-            {Icon.map({ size: 15 })}
-            {showMap ? "隐藏地图" : "显示地图"}
-          </Btn>
-          <Btn variant="primary" onClick={() => void runSearch(1)} disabled={loading}>
-            {loading ? Icon.spinner({ size: 15, className: "spin" }) : Icon.search({ size: 15 })}
-            {loading ? "检索中…" : "开始检索"}
-          </Btn>
-        </div>
-      </div>
-
-      {/* —— 检索工具栏 —— */}
-      {!settings.webKey && (
-        <div
-          className="row card card-pad"
-          style={{ borderColor: "rgba(245,181,68,.35)", background: "var(--amber-soft)", color: "var(--amber)", gap: 10 }}
-        >
-          {Icon.alert({ size: 16 })}
-          <span style={{ fontWeight: 600 }}>尚未配置高德 Web服务 Key,无法发起检索</span>
-          <div className="spacer" />
-          <Btn size="sm" onClick={onGoSettings}>
-            {Icon.gear({ size: 13 })} 去设置
-          </Btn>
-        </div>
-      )}
-      <div className="card card-pad search-bar">
-        <div className="segmented" role="tablist">
-          {MODES.map((m) => (
-            <button
-              key={m.key}
-              role="tab"
-              aria-selected={mode === m.key}
-              className={mode === m.key ? "active" : ""}
-              onClick={() => setMode(m.key)}
-              title={m.desc}
-            >
-              {m.key === "text" ? Icon.layers({ size: 14 }) : m.key === "polygon" ? Icon.map({ size: 14 }) : Icon.target({ size: 14 })}
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="search-row">
-          <Field label="关键词(最多 3 个,逗号分隔)" hint={kwCount > 1 ? `将并集合并 ${kwCount} 组结果` : undefined}>
-            <Input
-              value={keywords}
-              placeholder="如:咖啡店,奶茶,烘焙"
-              onChange={(e) => setKeywords(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void runSearch(1)}
-            />
-          </Field>
-
-          {mode === "text" && (
-            <>
-              <Field label="城市 / 区域(adcode 亦可)">
-                <Input
-                  value={region}
-                  placeholder="如:保定市 / 130600"
-                  onChange={(e) => setRegion(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void runSearch(1)}
-                />
-              </Field>
-              <div className="field" style={{ flex: "0 0 auto", minWidth: 120 }}>
-                <span className="field-label">限定城市</span>
-                <div className="switch-row" style={{ height: 34 }}>
-                  <Switch on={cityLimit} onChange={setCityLimit} label="citylimit" />
-                  <span>{cityLimit ? "已限定" : "不限"}</span>
-                </div>
-              </div>
-            </>
-          )}
-
-          {mode === "polygon" && (
-            <>
-              <div className="bounds-grid">
-                <Field label="西经度">
-                  <Input
-                    className="input key-field"
-                    value={bounds ? String(bounds.west) : ""}
-                    placeholder="116.30"
-                    onChange={(e) => setBounds((b) => ({ west: num(e.target.value, b?.west), south: b?.south ?? 0, east: b?.east ?? 0, north: b?.north ?? 0 }))}
-                  />
-                </Field>
-                <Field label="南纬度">
-                  <Input
-                    value={bounds ? String(bounds.south) : ""}
-                    placeholder="39.90"
-                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: num(e.target.value, b?.south), east: b?.east ?? 0, north: b?.north ?? 0 }))}
-                  />
-                </Field>
-                <Field label="东经度">
-                  <Input
-                    value={bounds ? String(bounds.east) : ""}
-                    placeholder="116.40"
-                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: b?.south ?? 0, east: num(e.target.value, b?.east), north: b?.north ?? 0 }))}
-                  />
-                </Field>
-                <Field label="北纬度">
-                  <Input
-                    value={bounds ? String(bounds.north) : ""}
-                    placeholder="39.95"
-                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: b?.south ?? 0, east: b?.east ?? 0, north: num(e.target.value, b?.north) }))}
-                  />
-                </Field>
-              </div>
-              <Btn onClick={() => setShowMap(true)} style={{ alignSelf: "flex-end" }}>
-                {Icon.map({ size: 14 })} 地图框选
-              </Btn>
-            </>
-          )}
-
-          {mode === "around" && (
-            <>
-              <Field label="中心点(地址/地标)" hint={center ? `已定位:${center}` : "回车定位,或在地图上点选"}>
-                <Input
-                  value={centerAddr}
-                  placeholder="如:北京西站 / 人民广场"
-                  onChange={(e) => {
-                    setCenterAddr(e.target.value);
-                    setCenter("");
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && void runSearch(1)}
-                />
-              </Field>
-              <Field label="半径(米)" hint="100 ~ 50000">
-                <Select value={String(radius)} onChange={(e) => setRadius(Number(e.target.value))}>
-                  {[300, 500, 1000, 2000, 3000, 5000, 10000].map((r) => (
-                    <option key={r} value={r}>
-                      {r >= 1000 ? `${r / 1000} 公里` : `${r} 米`}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </>
-          )}
-
-          <Field label="每页条数">
-            <Select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
-              {[10, 20, 30, 50].map((n) => (
-                <option key={n} value={n}>
-                  {n} 条
-                </option>
-              ))}
-            </Select>
-          </Field>
-
-          <div className="field" style={{ flex: "0 0 auto", minWidth: 118 }}>
-            <span className="field-label">仅看有电话</span>
-            <div className="switch-row" style={{ height: 34 }}>
-              <Switch on={onlyWithTel} onChange={setOnlyWithTel} label="仅保留有电话的商户" />
-              <span>{onlyWithTel ? "开启" : "关闭"}</span>
-            </div>
-          </div>
-        </div>
-
-        {mode !== "text" && (
-          <div className="field-hint">
-            {mode === "polygon"
-              ? "提示:可在右侧地图上点击「框选范围」后拖拽鼠标圈定矩形商圈,也可手动填写四至经纬度。"
-              : "提示:中心点支持地址定位与地图点选;地图未启用时请手动输入经纬度(经度,纬度)。"}
-            {keywords && (
-              <span>
-                {" "}
-                · 关键词 <b>{splitKeywords(keywords).slice(0, MAX_KEYWORDS).join(" / ")}</b>
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* —— 统计 —— */}
-      {searched && (
-        <div className="stats">
-          <div className="stat">
-            <div className="stat-value">
-              {total}
-              <small>条</small>
-            </div>
-            <div className="stat-label">检索命中</div>
-          </div>
-          <div className="stat">
-            <div className="stat-value">
-              {results.length}
-              <small>本页</small>
-            </div>
-            <div className="stat-label">当前展示</div>
-          </div>
-          <div className="stat">
-            <div className="stat-value">
-              {withTelCount}
-              <small>条</small>
-            </div>
-            <div className="stat-label">含联系电话</div>
-          </div>
-          <div className="stat">
-            <div className="stat-value">
-              {selected.size}
-              <small>已勾选</small>
-            </div>
-            <div className="stat-label">待处理商户</div>
-          </div>
-        </div>
-      )}
-
-      {/* —— 工作区 —— */}
-      <div className="workspace">
-        <div className="table-wrap">
-          {!searched ? (
-            <Empty
-              icon={Icon.search({ size: 26 })}
-              title="开始你的第一次商户检索"
-              desc="输入关键词与区域,快速拉取门店名称、地址与联系电话。检索需人工发起,单页最多 50 条。"
-              action={
-                <Btn variant="primary" onClick={() => void runSearch(1)} disabled={loading}>
-                  {Icon.search({ size: 14 })} 立即检索
-                </Btn>
-              }
-            />
-          ) : results.length === 0 ? (
-            <Empty
-              icon={Icon.building({ size: 26 })}
-              title="本页没有结果"
-              desc="试试更换关键词、扩大检索半径,或取消「仅看有电话」筛选。"
-            />
-          ) : (
-            <table className="data">
-              <thead>
-                <tr>
-                  <th style={{ width: 38 }}>
-                    <input
-                      type="checkbox"
-                      className="checkbox"
-                      checked={results.length > 0 && selected.size === results.length}
-                      onChange={toggleSelectAll}
-                    />
-                  </th>
-                  <th>商户</th>
-                  <th>地址</th>
-                  <th>电话</th>
-                  <th>类型</th>
-                  <th style={{ width: 70 }}>评分</th>
-                  <th style={{ width: 110 }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map((r) => (
-                  <tr
-                    key={r.poiId}
-                    className={`${selected.has(r.poiId) ? "selected" : ""} ${activePoiId === r.poiId ? "active-row" : ""}`}
-                    onMouseEnter={() => setActivePoiId(r.poiId)}
-                  >
-                    <td>
-                      <input
-                        type="checkbox"
-                        className="checkbox"
-                        checked={selected.has(r.poiId)}
-                        onChange={() => toggleSelect(r.poiId)}
-                      />
-                    </td>
-                    <td>
-                      <div className="cell-title">{r.name}</div>
-                      <div className="cell-sub">{r.city || "—"}{r.type ? ` · ${r.type.split(";").slice(0, 2).join("/")}` : ""}</div>
-                    </td>
-                    <td>
-                      <div className="cell-sub" style={{ maxWidth: 260, color: "var(--text-1)" }}>{r.address || "—"}</div>
-                    </td>
-                    <td>
-                      {r.tel ? (
-                        <div>
-                          <div className="cell-mono">{r.tel}</div>
-                          <Badge tone={r.telType === "mobile" ? "accent" : "info"}>{telTypeLabel(r.telType)}</Badge>
-                        </div>
-                      ) : (
-                        <span className="muted">无号码</span>
-                      )}
-                    </td>
-                    <td>
-                      <Badge tone="default">{r.type ? r.type.split(";")[0] : "商户"}</Badge>
-                    </td>
-                    <td>
-                      <span className="rating">{fmtRating(r.rating)}</span>
-                    </td>
-                    <td>
-                      <div className="row" style={{ gap: 4 }}>
-                        <Btn size="sm" variant="ghost" onClick={() => setDetailPoi(r)} title="查看详情">
-                          {Icon.info({ size: 14 })}
-                        </Btn>
-                        <Btn
-                          size="sm"
-                          variant="ghost"
-                          className={`star-btn ${inPool(r.poiId) ? "on" : ""}`}
-                          onClick={() => {
-                            const added = addToPool([r]);
-                            toast(added ? `已收藏「${r.name}」` : "该商户已在客户池中", added ? "success" : "info");
-                          }}
-                          title={inPool(r.poiId) ? "已在客户池" : "加入客户池"}
-                        >
-                          {inPool(r.poiId) ? Icon.starFill({ size: 15 }) : Icon.star({ size: 15 })}
-                        </Btn>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <MapPanel
-          collapsed={!showMap}
-          onToggle={() => setShowMap(false)}
+    <div className="view" style={{ padding: 14, gap: 0 }}>
+      <div className="map-stage">
+        {/* —— 地图画布 —— */}
+        <MapCanvas
           mode={mode}
           results={results}
           bounds={bounds}
@@ -519,39 +291,375 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
             const [lng, lat] = loc.split(",");
             setCenterAddr(`地图选点(${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)})`);
           }}
-          activePoiId={activePoiId}
-          onPoiClick={(id) => setActivePoiId(id)}
+          focusPoiId={focusPoi?.poiId ?? null}
+          onPoiClick={(id) => setFocusPoi(results.find((r) => r.poiId === id) ?? null)}
+          drawRequest={drawReq}
+          clearRectRequest={clearReq}
+          fitRequest={fitReq}
+          onDrawStateChange={setDrawing}
         />
-      </div>
 
-      {/* —— 底部操作条 —— */}
-      <div className="action-bar">
-        <span className="sel-count">
-          已选 <b>{selected.size}</b> / {results.length} 条
-        </span>
-        <Btn size="sm" variant="ghost" onClick={toggleSelectAll} disabled={!results.length}>
-          {selected.size === results.length && results.length ? "取消全选" : "全选本页"}
-        </Btn>
-        <div className="spacer" />
-        <Btn size="sm" onClick={addSelectedToPool} disabled={!selectedItems.length}>
-          {Icon.star({ size: 14 })} 收藏到客户池
-        </Btn>
-        <Btn size="sm" variant="ghost" onClick={() => void handleExportCsv()} disabled={!results.length}>
-          {Icon.download({ size: 14 })} 导出 CSV
-        </Btn>
-        <Btn size="sm" variant="primary" onClick={() => void handleExport(true)} disabled={!selectedItems.length || exporting}>
-          {Icon.download({ size: 14 })} 导出选中 Excel
-        </Btn>
-        <Btn size="sm" onClick={() => void handleExport(false)} disabled={!results.length || exporting}>
-          {Icon.chart({ size: 14 })} 导出全部
-        </Btn>
-        <Btn size="sm" variant="ghost" onClick={prevPage} disabled={loading || page <= 1}>
-          {Icon.chevronL({ size: 14 })} 上一页
-        </Btn>
-        <span className="sel-count">第 {page} 页</span>
-        <Btn size="sm" variant="ghost" onClick={nextPage} disabled={loading || results.length < pageSize}>
-          下一页 {Icon.chevronR({ size: 14 })}
-        </Btn>
+        {/* —— 顶部检索栏 —— */}
+        <div ref={searchRef} className="float-search glass">
+          <div className="segmented">
+            {MODES.map((m) => (
+              <button key={m.key} className={mode === m.key ? "active" : ""} onClick={() => setMode(m.key)}>
+                {m.key === "text" ? Icon.layers({ size: 13 }) : m.key === "polygon" ? Icon.map({ size: 13 }) : Icon.target({ size: 13 })}
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="field field-grows" style={{ minWidth: 200 }}>
+            <span className="field-label">关键词(≤3,逗号分隔)</span>
+            <Input
+              value={keywords}
+              placeholder="如:咖啡店,奶茶,烘焙"
+              onChange={(e) => setKeywords(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void doSearch("new")}
+            />
+          </div>
+
+          {mode === "text" && (
+            <>
+              <div className="field" style={{ minWidth: 130 }}>
+                <span className="field-label">城市 / 区域</span>
+                <Input
+                  value={region}
+                  placeholder="保定市 / 130600"
+                  onChange={(e) => setRegion(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void doSearch("new")}
+                />
+              </div>
+              <div className="field" style={{ width: 96 }}>
+                <span className="field-label">限定城市</span>
+                <div className="switch-row" style={{ height: 32 }}>
+                  <Switch on={cityLimit} onChange={setCityLimit} label="citylimit" />
+                  <span style={{ fontSize: 11 }}>{cityLimit ? "已限定" : "不限"}</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {mode === "polygon" && (
+            <>
+              <div className="mini-bounds">
+                <Field label="西经度">
+                  <Input
+                    className="key-field"
+                    value={bounds ? String(bounds.west) : ""}
+                    placeholder="116.30"
+                    onChange={(e) => setBounds((b) => ({ west: num(e.target.value, b?.west), south: b?.south ?? 0, east: b?.east ?? 0, north: b?.north ?? 0 }))}
+                  />
+                </Field>
+                <Field label="南纬度">
+                  <Input
+                    className="key-field"
+                    value={bounds ? String(bounds.south) : ""}
+                    placeholder="39.90"
+                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: num(e.target.value, b?.south), east: b?.east ?? 0, north: b?.north ?? 0 }))}
+                  />
+                </Field>
+                <Field label="东经度">
+                  <Input
+                    className="key-field"
+                    value={bounds ? String(bounds.east) : ""}
+                    placeholder="116.40"
+                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: b?.south ?? 0, east: num(e.target.value, b?.east), north: b?.north ?? 0 }))}
+                  />
+                </Field>
+                <Field label="北纬度">
+                  <Input
+                    className="key-field"
+                    value={bounds ? String(bounds.north) : ""}
+                    placeholder="39.95"
+                    onChange={(e) => setBounds((b) => ({ west: b?.west ?? 0, south: b?.south ?? 0, east: b?.east ?? 0, north: num(e.target.value, b?.north) }))}
+                  />
+                </Field>
+              </div>
+              <div className="field" style={{ width: 118 }}>
+                <span className="field-label">网格深扫</span>
+                <Select value={String(gridN)} onChange={(e) => setGridN(Number(e.target.value))}>
+                  <option value={1}>关闭</option>
+                  <option value={2}>2×2(4格)</option>
+                  <option value={3}>3×3(9格)</option>
+                </Select>
+              </div>
+            </>
+          )}
+
+          {mode === "around" && (
+            <>
+              <div className="field" style={{ minWidth: 170 }}>
+                <span className="field-label">中心点(地址/地标或地图点选)</span>
+                <Input
+                  value={centerAddr}
+                  placeholder="如:北京西站"
+                  onChange={(e) => {
+                    setCenterAddr(e.target.value);
+                    setCenter("");
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && void doSearch("new")}
+                />
+              </div>
+              <div className="field" style={{ width: 100 }}>
+                <span className="field-label">半径</span>
+                <Select value={String(radius)} onChange={(e) => setRadius(Number(e.target.value))}>
+                  {[300, 500, 1000, 2000, 3000, 5000, 10000].map((r) => (
+                    <option key={r} value={r}>
+                      {r >= 1000 ? `${r / 1000} km` : `${r} m`}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </>
+          )}
+
+          <div className="field" style={{ width: 104 }}>
+            <span className="field-label">每次抓取</span>
+            <Select value={String(fetchPages)} onChange={(e) => setFetchPages(Number(e.target.value))}>
+              {[1, 2, 3, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n} 页 ×{pageSize}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="field" style={{ width: 88 }}>
+            <span className="field-label">每页</span>
+            <Select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+              {[10, 20, 30, 50].map((n) => (
+                <option key={n} value={n}>
+                  {n} 条
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <Btn variant="primary" onClick={() => void doSearch("new")} disabled={loading} style={{ height: 32 }}>
+            {loading ? Icon.spinner({ size: 14, className: "spin" }) : Icon.search({ size: 14 })}
+            {loading ? loadingLabel || "检索中…" : "开始检索"}
+          </Btn>
+        </div>
+
+        {/* —— 左侧商户列表 —— */}
+        {showList && (
+          <div className="float-list glass" style={{ top: searchH }}>
+            <div className="float-list-head">
+              <span className="float-list-title">商户列表</span>
+              <Badge tone="accent">{results.length} 家</Badge>
+              <div className="spacer" />
+              <div className="switch-row" style={{ gap: 6 }}>
+                <Switch on={onlyWithTel} onChange={setOnlyWithTel} label="仅看有电话" />
+                <span style={{ fontSize: 11 }}>有电话</span>
+              </div>
+            </div>
+            <div className="float-list-body">
+              {!searched ? (
+                <Empty
+                  icon={Icon.search({ size: 22 })}
+                  title="开始检索商户"
+                  desc="输入关键词与区域,点击「开始检索」。"
+                />
+              ) : results.length === 0 ? (
+                <Empty icon={Icon.building({ size: 22 })} title="本页没有结果" desc="换关键词、扩大范围,或取消「有电话」筛选。" />
+              ) : (
+                results.map((r) => (
+                  <div
+                    key={r.poiId}
+                    className={`poi-row ${focusPoi?.poiId === r.poiId ? "focused" : ""}`}
+                    onClick={() => setFocusPoi(r)}
+                  >
+                    <input
+                      type="checkbox"
+                      className="checkbox"
+                      checked={selected.has(r.poiId)}
+                      onChange={() => toggleSelect(r.poiId)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="poi-row-main">
+                      <div className="poi-row-name">
+                        {r.name}
+                        {r.rating > 0 && <span className="rating" style={{ marginLeft: 6, fontSize: 11 }}>{fmtRating(r.rating)}</span>}
+                      </div>
+                      <div className="poi-row-sub">
+                        {r.tel ? <span className="poi-row-tel">{r.tel}</span> : <span style={{ color: "var(--text-3)" }}>无号码</span>}
+                        {" · "}
+                        {r.address || "地址未知"}
+                      </div>
+                    </div>
+                    <button
+                      className={`star-btn ${inPool(r.poiId) ? "on" : ""}`}
+                      title={inPool(r.poiId) ? "已在客户池" : "加入客户池"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addSelectedToPool([r]);
+                      }}
+                    >
+                      {inPool(r.poiId) ? Icon.starFill({ size: 14 }) : Icon.star({ size: 14 })}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* —— 右侧工具条 —— */}
+        <div className="map-tools" style={{ top: searchH }}>
+          {mode === "polygon" && (
+            <Btn
+              className={`tool-btn glass ${drawing ? "active" : ""}`}
+              title={drawing ? "画框中,点击取消" : "拖拽框选矩形范围"}
+              onClick={() => {
+                if (drawing) setClearReq((n) => n + 1);
+                else setDrawReq((n) => n + 1);
+              }}
+            >
+              {Icon.target({ size: 17 })}
+            </Btn>
+          )}
+          {mode === "polygon" && bounds && (
+            <Btn className="tool-btn glass" title="清除框选" onClick={() => setClearReq((n) => n + 1)}>
+              {Icon.x({ size: 16 })}
+            </Btn>
+          )}
+          <Btn className="tool-btn glass" title="缩放至全部结果" onClick={() => setFitReq((n) => n + 1)}>
+            {Icon.layers({ size: 16 })}
+          </Btn>
+          <Btn className="tool-btn glass" title={showList ? "收起商户列表" : "展开商户列表"} onClick={() => setShowList((v) => !v)}>
+            {showList ? Icon.chevronL({ size: 16 }) : Icon.chevronR({ size: 16 })}
+          </Btn>
+          {mode === "around" && center && (
+            <Btn
+              className="tool-btn glass"
+              title="清除中心点"
+              onClick={() => {
+                setCenter("");
+                setCenterAddr("");
+              }}
+            >
+              {Icon.target({ size: 16 })}
+            </Btn>
+          )}
+        </div>
+
+        {/* —— 门店信息卡(点击地图点位)— — */}
+        {focusPoi && (
+          <div className="store-card glass">
+            <div className="store-card-head">
+              <div className="row" style={{ alignItems: "flex-start" }}>
+                <h4 className="store-card-name">{focusPoi.name}</h4>
+                <div className="spacer" />
+                <Btn variant="ghost" size="sm" className="btn-icon" onClick={() => setFocusPoi(null)} title="关闭">
+                  {Icon.x({ size: 13 })}
+                </Btn>
+              </div>
+              <div className="row" style={{ marginTop: 4, gap: 6, flexWrap: "wrap" }}>
+                <Badge tone="accent">{focusPoi.type ? focusPoi.type.split(";")[0] : "商户"}</Badge>
+                {focusPoi.rating > 0 && (
+                  <Badge tone="amber">
+                    ★ {fmtRating(focusPoi.rating)}
+                  </Badge>
+                )}
+                <Badge tone={focusPoi.telType === "mobile" ? "info" : "default"}>{telTypeLabel(focusPoi.telType)}</Badge>
+              </div>
+            </div>
+            <div className="store-card-body">
+              <div className="store-card-row">
+                <span className="label">地址</span>
+                <span style={{ flex: 1 }}>{focusPoi.address || "—"}</span>
+              </div>
+              <div className="store-card-row">
+                <span className="label">电话</span>
+                <span className="mono" style={{ flex: 1, fontSize: 12.5 }}>
+                  {focusPoi.tel || "—"}
+                </span>
+                {focusPoi.tel && (
+                  <Btn size="sm" variant="ghost" title="复制电话" onClick={() => void copyTel(focusPoi.tel)}>
+                    {Icon.phone({ size: 13 })}
+                  </Btn>
+                )}
+              </div>
+              <div className="store-card-row">
+                <span className="label">城市</span>
+                <span style={{ flex: 1 }}>
+                  {focusPoi.city || "—"}
+                  {focusPoi.adcode && <span className="muted"> · {focusPoi.adcode}</span>}
+                </span>
+              </div>
+            </div>
+            <div className="store-card-actions">
+              <Btn size="sm" variant="primary" disabled={inPool(focusPoi.poiId)} onClick={() => addSelectedToPool([focusPoi])}>
+                {inPool(focusPoi.poiId) ? Icon.check({ size: 13 }) : Icon.star({ size: 13 })}
+                {inPool(focusPoi.poiId) ? "已收藏" : "加入客户池"}
+              </Btn>
+              <Btn size="sm" onClick={() => setDetailPoi(focusPoi)}>
+                {Icon.info({ size: 13 })} 完整详情
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {/* —— 底部操作条 —— */}
+        <div className="float-bottom glass">
+          <span className="float-stat">
+            已加载 <b className="hl">{results.length}</b> / 约 <b>{total || results.length}</b> 条
+          </span>
+          <span className="float-stat">
+            含电话 <b>{withTelCount}</b>
+          </span>
+          <span className="float-stat">
+            已选 <b className="hl">{selected.size}</b>
+          </span>
+          <Badge tone="accent">{loading ? loadingLabel || "检索中" : `${loadedPages ? `已抓 ${loadedPages} 页` : "待检索"}`}</Badge>
+
+          <div className="spacer" />
+
+          <Btn size="sm" onClick={() => void doSearch("more")} disabled={loading || !searched || exhausted}>
+            {Icon.download({ size: 13 })} 加载更多
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={toggleSelectAll} disabled={!results.length}>
+            {selected.size === results.length && results.length ? "取消全选" : "全选"}
+          </Btn>
+          <Btn
+            size="sm"
+            onClick={() => addSelectedToPool(selectedItems)}
+            disabled={!selectedItems.length}
+          >
+            {Icon.star({ size: 13 })} 收藏选中
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={() => void handleExport(true, "csv")} disabled={!selectedItems.length}>
+            {Icon.download({ size: 13 })} CSV
+          </Btn>
+          <Btn size="sm" variant="primary" onClick={() => void handleExport(true)} disabled={!selectedItems.length}>
+            {Icon.download({ size: 13 })} 导出选中
+          </Btn>
+          <Btn size="sm" onClick={() => void handleExport(false)} disabled={!results.length}>
+            {Icon.chart({ size: 13 })} 导出全部
+          </Btn>
+        </div>
+
+        {/* —— 未配置 Key 提示 —— */}
+        {!settings.webKey && (
+          <div
+            className="row glass"
+            style={{
+              position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              zIndex: 40, padding: "16px 22px", borderRadius: 16, flexDirection: "column", gap: 10, textAlign: "center",
+            }}
+          >
+            {Icon.alert({ size: 22 })}
+            <div style={{ fontWeight: 650 }}>尚未配置高德 Web服务 Key</div>
+            <div className="field-hint" style={{ maxWidth: 300 }}>
+              检索功能需要你的高德「Web服务」Key。Key 仅存本机,输入即生效。
+            </div>
+            <Btn variant="primary" onClick={onGoSettings}>
+              {Icon.gear({ size: 14 })} 去设置
+            </Btn>
+          </div>
+        )}
       </div>
 
       {detailPoi && (
@@ -559,10 +667,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
           poi={detailPoi}
           webKey={settings.webKey}
           inPool={inPool(detailPoi.poiId)}
-          onAddPool={(item) => {
-            const added = addToPool([item]);
-            toast(added ? `已收藏「${item.name}」` : "该商户已在客户池中", added ? "success" : "info");
-          }}
+          onAddPool={(item) => addSelectedToPool([item])}
           onClose={() => setDetailPoi(null)}
           onLog={(summary, ok, error) => pushLog({ endpoint: "place/detail", summary, ok, error: error || "" })}
         />

@@ -1,12 +1,13 @@
-/** 地图面板 —— 高德 JS API 可视化:结果打点 / 拖拽框选 / 点选中心点。
+/** 地图画布 —— 高德 JS API 全幅地图。
  *
- * 框选基于官方 AMap.MouseTool(画框时自动接管鼠标拖拽,与地图平移互不冲突);
- * JS Key 未配置或加载失败时优雅降级:展示引导占位,检索/导出功能不受影响。
+ * 控制按钮/列表由父层以悬浮面板呈现,本组件专注:
+ * 结果打点、MouseTool 拖拽框选、点选中心点、聚焦门店、缩放至结果。
+ * JS Key 未配置或加载失败时优雅降级。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../lib/appContext";
 import type { Bounds, PoiItem, SearchMode } from "../lib/types";
-import { Badge, Btn, Icon } from "./ui";
+import { Btn, Icon } from "./ui";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -61,31 +62,38 @@ const RECT_STYLE = {
   fillOpacity: 0.1,
 };
 
-interface MapPanelProps {
-  collapsed: boolean;
-  onToggle: () => void;
+export interface MapCanvasProps {
   mode: SearchMode;
   results: PoiItem[];
   bounds: Bounds | null;
   onBoundsChange: (b: Bounds | null) => void;
   center: string;
   onCenterChange: (loc: string) => void;
-  activePoiId: string | null;
+  focusPoiId: string | null;
   onPoiClick: (poiId: string) => void;
+  /** 递增触发画框 */
+  drawRequest: number;
+  /** 递增清除框选 */
+  clearRectRequest: number;
+  /** 递增缩放至全部结果 */
+  fitRequest: number;
+  onDrawStateChange?: (drawing: boolean) => void;
 }
 
-export function MapPanel({
-  collapsed,
-  onToggle,
+export function MapCanvas({
   mode,
   results,
   bounds,
   onBoundsChange,
   center,
   onCenterChange,
-  activePoiId,
+  focusPoiId,
   onPoiClick,
-}: MapPanelProps) {
+  drawRequest,
+  clearRectRequest,
+  fitRequest,
+  onDrawStateChange,
+}: MapCanvasProps) {
   const { settings, theme } = useApp();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -95,16 +103,16 @@ export function MapPanel({
   const toolRef = useRef<any>(null);
   const onPoiClickRef = useRef(onPoiClick);
   onPoiClickRef.current = onPoiClick;
+  const lastResultsRef = useRef<PoiItem[] | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [loadingMap, setLoadingMap] = useState(false);
-  const [drawing, setDrawing] = useState(false);
 
   const hasJsKey = Boolean(settings.jsKey);
 
   /* —— 初始化地图 —— */
   useEffect(() => {
-    if (collapsed || !hasJsKey) return;
+    if (!hasJsKey) return;
     let disposed = false;
 
     (async () => {
@@ -138,9 +146,9 @@ export function MapPanel({
       disposed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collapsed, hasJsKey, settings.jsKey]);
+  }, [hasJsKey, settings.jsKey]);
 
-  /* —— 容器尺寸变化(视图切换/面板收放)后刷新地图 —— */
+  /* —— 容器尺寸变化后刷新地图 —— */
   useEffect(() => {
     const el = containerRef.current;
     const map = mapRef.current;
@@ -165,7 +173,7 @@ export function MapPanel({
     }
   }, [theme, ready]);
 
-  /* —— 结果打点 —— */
+  /* —— 结果打点(仅结果变化时自动缩放至全览;聚焦只换样式不缩放)— — */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -181,7 +189,7 @@ export function MapPanel({
       .map((p) => {
         const [lng, lat] = p.location.split(",").map(Number);
         if (Number.isNaN(lng) || Number.isNaN(lat)) return null;
-        const hot = p.poiId === activePoiId;
+        const hot = p.poiId === focusPoiId;
         const marker = new AMap.Marker({
           position: [lng, lat],
           title: p.name,
@@ -195,12 +203,30 @@ export function MapPanel({
       .filter(Boolean);
 
     markersRef.current = markers;
+    const resultsChanged = lastResultsRef.current !== results;
+    lastResultsRef.current = results;
     if (markers.length) {
       map.add(markers);
-      map.setFitView(markers, false, [40, 40, 40, 40], 15);
+      if (resultsChanged) map.setFitView(markers, false, [46, 46, 46, 46], 15);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, ready, activePoiId]);
+  }, [results, ready, focusPoiId]);
+
+  /* —— 聚焦门店:平移视野 —— */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !focusPoiId) return;
+    const p = results.find((r) => r.poiId === focusPoiId);
+    if (!p?.location) return;
+    const [lng, lat] = p.location.split(",").map(Number);
+    if (Number.isNaN(lng) || Number.isNaN(lat)) return;
+    try {
+      map.setZoomAndCenter(Math.max(map.getZoom(), 16), [lng, lat]);
+    } catch {
+      /* 忽略 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPoiId, ready]);
 
   /* —— 框选范围回显 —— */
   useEffect(() => {
@@ -268,7 +294,7 @@ export function MapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, mode]);
 
-  /* —— 结束/取消画框(还原 MouseTool 与地图拖拽)— — */
+  /* —— 结束画框 —— */
   const stopDraw = useCallback(() => {
     const tool = toolRef.current;
     if (tool) {
@@ -279,18 +305,18 @@ export function MapPanel({
       }
       toolRef.current = null;
     }
-    setDrawing(false);
+    onDrawStateChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => () => stopDraw(), [stopDraw]);
 
-  /* —— 拖拽框选(MouseTool,画框时自动接管拖拽,不会与地图平移冲突)— — */
+  /* —— 开始拖拽框选(MouseTool,与地图平移互不冲突)— — */
   const startDraw = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
     const AMap = window.AMap;
 
-    // 已在画框则先停止;重新画框即放弃旧范围,避免取消后残留"看不见的框"
     stopDraw();
     if (rectRef.current) {
       map.remove(rectRef.current);
@@ -301,7 +327,7 @@ export function MapPanel({
     try {
       const tool = new AMap.MouseTool(map);
       toolRef.current = tool;
-      setDrawing(true);
+      onDrawStateChange?.(true);
       tool.rectangle({ ...RECT_STYLE });
 
       tool.on("draw", (e: any) => {
@@ -318,7 +344,7 @@ export function MapPanel({
         } catch {
           /* 忽略 */
         }
-        setDrawing(false);
+        onDrawStateChange?.(false);
         if (!b) return;
         const sw = b.getSouthWest();
         const ne = b.getNorthEast();
@@ -330,10 +356,53 @@ export function MapPanel({
         onBoundsChange({ west, south, east, north });
       });
     } catch (err) {
-      setDrawing(false);
+      onDrawStateChange?.(false);
       setError(err instanceof Error ? err.message : String(err));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onBoundsChange, stopDraw, bounds]);
+
+  /* —— 外部信号:画框 / 清框 / 缩放至结果 —— */
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!ready) return;
+    if (!startedRef.current) {
+      startedRef.current = true;
+      return;
+    }
+    startDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawRequest]);
+
+  const clearedRef = useRef(false);
+  useEffect(() => {
+    if (!ready) return;
+    if (!clearedRef.current) {
+      clearedRef.current = true;
+      return;
+    }
+    stopDraw();
+    onBoundsChange(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clearRectRequest]);
+
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    if (!fittedRef.current) {
+      fittedRef.current = true;
+      return;
+    }
+    if (markersRef.current.length) {
+      try {
+        map.setFitView(markersRef.current, false, [46, 46, 46, 46], 15);
+      } catch {
+        /* 忽略 */
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitRequest]);
 
   /* —— 重试 —— */
   const retry = () => {
@@ -359,73 +428,40 @@ export function MapPanel({
   };
 
   return (
-    <aside className={`map-panel ${collapsed ? "collapsed" : ""}`}>
-      <div className="map-head">
-        <span className="map-title">地图视图</span>
-        {ready && mode === "polygon" && (
-          <Btn size="sm" variant={drawing ? "primary" : "default"} onClick={drawing ? stopDraw : startDraw}>
-            {Icon.target({ size: 13 })}
-            {drawing ? "画框中…点击取消" : "框选范围"}
+    <div className="map-canvas" ref={containerRef}>
+      {!hasJsKey && (
+        <div className="map-empty">
+          <div className="map-empty-title">地图视图未启用</div>
+          <div>
+            在「设置 → 地图可视化」填入高德
+            <br />
+            「Web端(JS API)」Key 后即可显示地图,
+            <br />
+            支持结果打点、拖拽框选、点选中心点。
+          </div>
+          <Btn size="sm" variant="ghost" onClick={retry}>
+            {Icon.refresh({ size: 13 })} 重新加载
           </Btn>
-        )}
-        {ready && bounds && (
-          <Btn
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              stopDraw();
-              onBoundsChange(null);
-            }}
-          >
-            清除框选
+        </div>
+      )}
+      {hasJsKey && loadingMap && (
+        <div className="map-empty">
+          <div className="map-empty-title">{Icon.spinner({ size: 18, className: "spin" })} 地图加载中…</div>
+        </div>
+      )}
+      {hasJsKey && error && (
+        <div className="map-empty">
+          <div className="map-empty-title">地图加载失败</div>
+          <div>{error}</div>
+          <div className="field-hint">
+            请确认 JS Key 类型为「Web端(JS API)」,且未绑定与当前环境不符的域名白名单。
+          </div>
+          <Btn size="sm" onClick={retry}>
+            {Icon.refresh({ size: 13 })} 重试
           </Btn>
-        )}
-        <div className="spacer" />
-        <Btn size="sm" variant="ghost" className="btn-icon" onClick={onToggle} title="收起地图">
-          {Icon.chevronR({ size: 15 })}
-        </Btn>
-      </div>
-
-      <div className="map-canvas" ref={containerRef}>
-        {!hasJsKey && (
-          <div className="map-empty">
-            <div className="map-empty-title">地图视图未启用</div>
-            <div>
-              在「设置 → 地图可视化」填入高德
-              <br />
-              「Web端(JS API)」Key 后即可显示地图,
-              <br />
-              支持结果打点、拖拽框选、点选中心点。
-            </div>
-            <Badge tone="info">检索与导出功能不受影响</Badge>
-          </div>
-        )}
-        {hasJsKey && loadingMap && (
-          <div className="map-empty">
-            <div className="map-empty-title">{Icon.spinner({ size: 18, className: "spin" })} 地图加载中…</div>
-          </div>
-        )}
-        {hasJsKey && error && (
-          <div className="map-empty">
-            <div className="map-empty-title">地图加载失败</div>
-            <div>{error}</div>
-            <div className="field-hint">
-              请确认 JS Key 类型为「Web端(JS API)」,且未绑定与当前环境不符的域名白名单。
-            </div>
-            <Btn size="sm" onClick={retry}>
-              {Icon.refresh({ size: 13 })} 重试
-            </Btn>
-          </div>
-        )}
-        {ready && (
-          <div className="map-badge-row">
-            <Badge tone="accent">已标注 {results.filter((r) => r.location).length} 个点位</Badge>
-            {mode === "polygon" && bounds && <Badge tone="amber">已框选范围</Badge>}
-            {mode === "around" && center && <Badge tone="amber">中心点已设置</Badge>}
-          </div>
-        )}
-      </div>
-    </aside>
+        </div>
+      )}
+    </div>
   );
 }
 
