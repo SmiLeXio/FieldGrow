@@ -67,14 +67,14 @@
   <p class="sub">地推拓客 · 点位 × 生长 —— icon 方案探索与定稿预览(生成自 logo-generator 工作流)</p>
 
   <div class="hero">
-    <img src="final-app-icon.png" alt="FieldGrow App Icon" />
+    <img src="final-app-icon-3d.png" alt="FieldGrow App Icon" />
     <div>
-      <h2>Growth Pin · 点位生长</h2>
-      <p>地图点位轮廓中长出一株新芽:落点是 Field,新芽是 Grow。与 App 地图大头针同构,16px 仍可辨,单色安全。</p>
-      <p>墨绿渐变容器 + 近白 pin + 翠绿新芽,与产品玻璃拟态设计语言一致。</p>
-      <span class="tag">v0.2.5 应用图标</span>
+      <h2>3D 地图导航 · 当前应用图标</h2>
+      <p>地图点位 × 商户门店 × 客户信息卡:地推拓客一图说清。已去除源图白画布与 3D 白色边框,四角透明,任意底色无白边。</p>
+      <p>下方保留此前 Growth Pin 单色方案与 6 个探索变体(可作 favicon / 单色场景备选)。</p>
+      <span class="tag">v0.2.6 应用图标</span>
       <span class="tag">Win / macOS / Linux</span>
-      <span class="tag">currentColor 单色可复用</span>
+      <span class="tag">透明圆角 · 无白边</span>
     </div>
   </div>
 
@@ -128,7 +128,7 @@
     const sizes = document.getElementById("sizes");
     for (const px of [16, 24, 32, 48, 64, 128]) {
       const fig = document.createElement("figure");
-      fig.innerHTML = `<img src="final-app-icon.png" width="${px}" height="${px}" alt="${px}px" />
+      fig.innerHTML = `<img src="final-app-icon-3d.png" width="${px}" height="${px}" alt="${px}px" />
         <figcaption>${px}px</figcaption>`;
       sizes.appendChild(fig);
     }

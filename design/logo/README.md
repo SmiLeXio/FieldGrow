@@ -20,6 +20,18 @@
 | `variant-05-route-growth.svg` | Route Growth 扫街路线 | S 形路线节点逐级生长 | 概念好,重心偏斜 |
 | `variant-06-grid-field.svg` | Grid Field 网格田野 | 三格点位 + 一格长成叶(网格深扫隐喻) | 二轮简化后成立 |
 
+## 当前应用图标(v0.2.6+): 3D 地图导航图标
+
+`final-app-icon-3d.png` —— 用户提供的 3D 风格图标(地图点位 × 商户 × 客户卡),经以下处理后作为应用图标:
+
+1. **去白边**: 源图外层是白色画布 + 3D 白色光泽边框,按"非近白"严格阈值裁进彩色本体,并取正方形居中裁切(1007px)
+2. **透明圆角**: 估算圆角半径(≈18.4%)生成 alpha 蒙版,四角透明,深/浅底都无白边
+3. **全量替换**: `src-tauri/icons/*`(Win .ico / macOS .icns / Linux / iOS / Android)、`public/logo.png`
+
+源图保留在 `蓝色地图导航与店铺定位图标.png`;处理脚本思路: 边缘扫描 bbox → 收缩防锯齿 → 圆角蒙版 `dest-in`。
+
+以下为此前的设计探索(Growth Pin 方案,仍可作单色备选):
+
 ## 定稿: Growth Pin(点位生长)
 
 **为什么是它**
