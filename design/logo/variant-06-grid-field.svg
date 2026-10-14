@@ -1,0 +1,7 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- V6 · Grid Field 网格田野 —— 网格覆盖,一格发芽:三格为点位,一格长成叶 -->
+  <rect x="22" y="22" width="22" height="22" rx="6" fill="currentColor"/>
+  <rect x="22" y="56" width="22" height="22" rx="6" fill="currentColor"/>
+  <rect x="56" y="56" width="22" height="22" rx="6" fill="currentColor"/>
+  <path d="M58 76 C 52 62 58 48 76 42 C 80 60 74 74 58 76 Z" fill="currentColor"/>
+</svg>

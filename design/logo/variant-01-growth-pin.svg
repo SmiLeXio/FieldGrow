@@ -1,0 +1,8 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- V1 · Growth Pin 生长点位 —— 点位(地推)× 生长(拓客):外框点位,内生新芽 -->
+  <path d="M50 88 C 33 64 27 58 27 43 A 23 23 0 1 1 73 43 C 73 58 67 64 50 88 Z"
+        stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M50 62 V 38" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+  <path d="M50 47 C 41 47 36 41 34.5 33 C 43 32 50 38 50 47 Z" fill="currentColor"/>
+  <path d="M50 42 C 59 42 64 36 65.5 28 C 57 27 50 33 50 42 Z" fill="currentColor"/>
+</svg>

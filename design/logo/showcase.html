@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FieldGrow · Logo Showcase</title>
+<style>
+  :root {
+    --ink: #101915;
+    --paper: #f4f6f5;
+    --emerald: #34d399;
+    --muted: #6b7a73;
+    --line: #dfe6e2;
+    --glass-dark: rgba(255, 255, 255, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.7 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background:
+      radial-gradient(1200px 500px at 80% -10%, rgba(52, 211, 153, 0.12), transparent 60%),
+      var(--paper);
+    color: var(--ink);
+    padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 30px; letter-spacing: 0.5px; margin: 0 0 6px; }
+  h1 .en { color: var(--muted); font-weight: 500; font-size: 18px; margin-left: 10px; }
+  .sub { color: var(--muted); margin: 0 0 36px; }
+  .hero {
+    display: flex; gap: 36px; align-items: center;
+    background: linear-gradient(135deg, #111917, #0a3d2b);
+    border-radius: 24px; padding: 44px; color: #eaf5ef;
+    box-shadow: 0 24px 60px rgba(10, 61, 43, 0.35);
+  }
+  .hero img { width: 200px; height: 200px; border-radius: 44px; box-shadow: 0 18px 40px rgba(0,0,0,0.4); }
+  .hero h2 { margin: 0 0 8px; font-size: 26px; }
+  .hero p { margin: 4px 0; color: #b9d8cb; max-width: 520px; }
+  .tag {
+    display: inline-block; margin: 14px 8px 0 0; padding: 4px 12px;
+    border: 1px solid rgba(52, 211, 153, 0.5); color: var(--emerald);
+    border-radius: 999px; font-size: 12.5px;
+  }
+  .section-title { margin: 48px 0 18px; font-size: 19px; }
+  .section-title small { color: var(--muted); font-weight: 400; margin-left: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+  .card {
+    background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px 16px 14px; text-align: center;
+  }
+  .card.dark { background: var(--ink); border-color: var(--ink); color: #eaf5ef; }
+  .card img { width: 84px; height: 84px; }
+  .card .name { margin-top: 12px; font-size: 13.5px; font-weight: 600; }
+  .card .meta { font-size: 12px; color: var(--muted); }
+  .card.dark .meta { color: #86a69a; }
+  .sizes { display: flex; align-items: flex-end; gap: 26px; background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 26px; flex-wrap: wrap; }
+  .sizes figure { margin: 0; text-align: center; }
+  .sizes figcaption { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+  .sizes img { display: block; margin: 0 auto; }
+  .mono { background: var(--ink); color: var(--emerald); border-radius: 12px; padding: 18px 22px; font: 13px/1.65 ui-monospace, Consolas, monospace; overflow-x: auto; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FieldGrow<span class="en">Logo Showcase</span></h1>
+  <p class="sub">地推拓客 · 点位 × 生长 —— icon 方案探索与定稿预览(生成自 logo-generator 工作流)</p>
+
+  <div class="hero">
+    <img src="final-app-icon.png" alt="FieldGrow App Icon" />
+    <div>
+      <h2>Growth Pin · 点位生长</h2>
+      <p>地图点位轮廓中长出一株新芽:落点是 Field,新芽是 Grow。与 App 地图大头针同构,16px 仍可辨,单色安全。</p>
+      <p>墨绿渐变容器 + 近白 pin + 翠绿新芽,与产品玻璃拟态设计语言一致。</p>
+      <span class="tag">v0.2.5 应用图标</span>
+      <span class="tag">Win / macOS / Linux</span>
+      <span class="tag">currentColor 单色可复用</span>
+    </div>
+  </div>
+
+  <h3 class="section-title">六个探索方案 <small>单色 · currentColor · viewBox 100×100</small></h3>
+  <div class="grid" id="variants-light"></div>
+  <div class="grid" id="variants-dark" style="margin-top:16px"></div>
+
+  <h3 class="section-title">尺寸压力测试 <small>favicon / 任务栏 / 托盘 / 桌面</small></h3>
+  <div class="sizes" id="sizes"></div>
+
+  <h3 class="section-title">单色内联用法</h3>
+  <div class="mono">&lt;span style="color:#34D399"&gt;&lt;!-- inline variant-01-growth-pin.svg --&gt;&lt;/span&gt;</div>
+
+  <footer>FieldGrow Design · generated with logo-generator skill · sources: design/logo/*.svg</footer>
+</div>
+
+<script>
+  const variants = [
+    { file: "variant-01-growth-pin.svg", name: "Growth Pin 点位生长", meta: "✅ 定稿概念" },
+    { file: "variant-02-leaf-compass.svg", name: "Leaf Compass 叶之罗盘", meta: "备选" },
+    { file: "variant-03-field-rows.svg", name: "Field Rows 田垄生长", meta: "备选" },
+    { file: "variant-04-beacon.svg", name: "Ripple Point 落点涟漪", meta: "二轮迭代" },
+    { file: "variant-05-route-growth.svg", name: "Route Growth 扫街路线", meta: "备选" },
+    { file: "variant-06-grid-field.svg", name: "Grid Field 网格田野", meta: "二轮迭代" },
+  ];
+
+  // variants are monochrome SVGs using currentColor — inline-fetch so CSS color applies
+  async function inlineSvg(file) {
+    const res = await fetch(file);
+    let text = await res.text();
+    text = text.replace(/fill="none"/, 'fill="none" style="color:inherit"');
+    return text;
+  }
+
+  (async () => {
+    const light = document.getElementById("variants-light");
+    const dark = document.getElementById("variants-dark");
+    for (const v of variants) {
+      const svg = await inlineSvg(v.file);
+      for (const [host, cls] of [[light, "card"], [dark, "card dark"]]) {
+        const div = document.createElement("div");
+        div.className = cls;
+        div.innerHTML = `<div style="color:${cls.includes("dark") ? "#34d399" : "#101915"}">${svg}</div>
+          <div class="name">${v.name}</div><div class="meta">${v.meta}</div>`;
+        const inner = div.querySelector("svg");
+        if (inner) { inner.setAttribute("width", "84"); inner.setAttribute("height", "84"); }
+        host.appendChild(div);
+      }
+    }
+
+    const sizes = document.getElementById("sizes");
+    for (const px of [16, 24, 32, 48, 64, 128]) {
+      const fig = document.createElement("figure");
+      fig.innerHTML = `<img src="final-app-icon.png" width="${px}" height="${px}" alt="${px}px" />
+        <figcaption>${px}px</figcaption>`;
+      sizes.appendChild(fig);
+    }
+  })();
+</script>
+</body>
+</html>

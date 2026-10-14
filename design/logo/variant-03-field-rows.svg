@@ -1,0 +1,9 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- V3 · Field Rows 田垄生长 —— 深耕田野:三道田垄,中央破土新芽 -->
+  <path d="M20 66 Q 50 52 80 66" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M15 78 Q 50 62 85 78" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M11 90 Q 50 72 89 90" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M50 58 V 30" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+  <path d="M50 41 C 41 41 36 35 34.5 27 C 43 26 50 32 50 41 Z" fill="currentColor"/>
+  <path d="M50 36 C 59 36 64 30 65.5 22 C 57 21 50 27 50 36 Z" fill="currentColor"/>
+</svg>

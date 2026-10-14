@@ -1,0 +1,6 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- V4 · Ripple Point 落点涟漪 —— 点位落地,商圈辐射:浅弧涟漪,避免 WiFi/笑脸既视感 -->
+  <circle cx="50" cy="36" r="7" fill="currentColor"/>
+  <path d="M28 62 Q 50 53 72 62" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M18 80 Q 50 68 82 80" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+</svg>
