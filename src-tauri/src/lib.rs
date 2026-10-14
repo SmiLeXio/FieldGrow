@@ -14,6 +14,7 @@ const ALLOWED_ENDPOINTS: &[&str] = &[
     "place/detail",
     "geocode/geo",
     "geocode/regeo",
+    "config/district",
 ];
 
 const AMAP_BASE: &str = "https://restapi.amap.com/v3/";

@@ -278,6 +278,57 @@ export async function geocode(address: string, webKey: string, city = ""): Promi
   return loc;
 }
 
+/** 行政区划:城市 → 区县列表(区县筛选用) */
+export interface District {
+  name: string;
+  adcode: string;
+}
+
+export async function fetchDistricts(city: string, webKey: string): Promise<District[]> {
+  if (!webKey) return [];
+  await throttle();
+  const data = await callAmap("config/district", {
+    key: webKey,
+    keywords: city,
+    subdistrict: "1",
+    extensions: "base",
+    output: "json",
+  });
+  const top = ((data.districts as Record<string, unknown>[]) || [])[0];
+  const children = (top?.districts as Record<string, unknown>[]) || [];
+  return children
+    .map((d) => ({ name: s(d.name), adcode: s(d.adcode) }))
+    .filter((d) => d.adcode && d.name);
+}
+
+/** 圆形检索范围 → 外接矩形(网格深扫用) */
+export function circleBounds(center: string, radiusM: number): Bounds {
+  const [lng, lat] = center.split(",").map(Number);
+  const dLat = radiusM / 111320;
+  const dLng = radiusM / (111320 * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
+  return {
+    west: Number((lng - dLng).toFixed(6)),
+    south: Number((lat - dLat).toFixed(6)),
+    east: Number((lng + dLng).toFixed(6)),
+    north: Number((lat + dLat).toFixed(6)),
+  };
+}
+
+/** 判断 POI 是否在中心点半径内(周边网格深扫后裁剪成真正的圆形区域) */
+export function withinRadius(center: string, location: string, radiusM: number): boolean {
+  const [lng1, lat1] = center.split(",").map(Number);
+  const [lng2, lat2] = location.split(",").map(Number);
+  if ([lng1, lat1, lng2, lat2].some((v) => Number.isNaN(v))) return true;
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a)) <= radiusM * 1.05;
+}
+
 /** 连通性测试:用一个轻量查询验证 Key 可用。 */
 export async function testKey(webKey: string): Promise<string> {
   await throttle();

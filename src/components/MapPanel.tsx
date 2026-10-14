@@ -68,6 +68,7 @@ export interface MapCanvasProps {
   bounds: Bounds | null;
   onBoundsChange: (b: Bounds | null) => void;
   center: string;
+  radius: number;
   onCenterChange: (loc: string) => void;
   focusPoiId: string | null;
   onPoiClick: (poiId: string) => void;
@@ -86,6 +87,7 @@ export function MapCanvas({
   bounds,
   onBoundsChange,
   center,
+  radius,
   onCenterChange,
   focusPoiId,
   onPoiClick,
@@ -100,6 +102,7 @@ export function MapCanvas({
   const markersRef = useRef<any[]>([]);
   const rectRef = useRef<any>(null);
   const centerMarkerRef = useRef<any>(null);
+  const circleRef = useRef<any>(null);
   const toolRef = useRef<any>(null);
   const onPoiClickRef = useRef(onPoiClick);
   onPoiClickRef.current = onPoiClick;
@@ -250,7 +253,7 @@ export function MapCanvas({
     }
   }, [bounds, ready]);
 
-  /* —— 周边中心点回显 —— */
+  /* —— 周边中心点 + 圆形检索范围回显 —— */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -259,6 +262,10 @@ export function MapCanvas({
     if (centerMarkerRef.current) {
       map.remove(centerMarkerRef.current);
       centerMarkerRef.current = null;
+    }
+    if (circleRef.current) {
+      map.remove(circleRef.current);
+      circleRef.current = null;
     }
     if (center) {
       const [lng, lat] = center.split(",").map(Number);
@@ -270,9 +277,22 @@ export function MapCanvas({
         });
         centerMarkerRef.current = m;
         map.add(m);
+
+        // 圆形检索范围提示
+        const circle = new AMap.Circle({
+          center: [lng, lat],
+          radius: Math.max(50, radius),
+          strokeColor: "#34d399",
+          strokeWeight: 2,
+          strokeStyle: "dashed",
+          fillColor: "#34d399",
+          fillOpacity: 0.08,
+        });
+        circleRef.current = circle;
+        map.add(circle);
       }
     }
-  }, [center, ready]);
+  }, [center, radius, ready]);
 
   /* —— 点选中心点(周边模式)— — */
   useEffect(() => {

@@ -1,6 +1,6 @@
 [package]
 name = "field-grow"
-version = "0.2.0"
+version = "0.2.1"
 description = "FieldGrow · 地推拓客利器 — 地图商户检索 / 信息管理 / 一键导出"
 authors = ["SmiLeXio"]
 edition = "2021"

@@ -9,10 +9,14 @@ import { MapCanvas } from "../components/MapPanel";
 import { Badge, Btn, Empty, Field, Icon, Input, Select, Switch } from "../components/ui";
 import { useApp } from "../lib/appContext";
 import {
+  circleBounds,
+  fetchDistricts,
   geocode,
   searchPoiPages,
   splitBoundsGrid,
   splitKeywords,
+  withinRadius,
+  type District,
   type SearchPagesResult,
 } from "../lib/amap";
 import { exportRows, poiColumns } from "../lib/export";
@@ -41,6 +45,8 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
   const [fetchPages, setFetchPages] = useState(2);
   const [gridN, setGridN] = useState(1);
   const [onlyWithTel, setOnlyWithTel] = useState(true);
+  const [districts, setDistricts] = useState<District[]>([]);
+  const [districtAdcode, setDistrictAdcode] = useState("");
 
   /* —— 结果状态 —— */
   const [results, setResults] = useState<PoiItem[]>([]);
@@ -71,6 +77,32 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
     return () => ro.disconnect();
   }, []);
 
+  /* —— 区县列表:随城市输入自动加载(供区县筛选/文本检索限定)— — */
+  useEffect(() => {
+    if (!settings.webKey || !region.trim()) {
+      setDistricts([]);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      fetchDistricts(region.trim(), settings.webKey)
+        .then((list) => {
+          if (!alive) return;
+          setDistricts(list);
+          // 原选中的区县不在新列表里(换了城市)则清空
+          if (districtAdcode && !list.some((d) => d.adcode === districtAdcode)) {
+            setDistrictAdcode("");
+          }
+        })
+        .catch(() => alive && setDistricts([]));
+    }, 500);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, settings.webKey]);
+
   const kwCount = splitKeywords(keywords).length;
   const selectedItems = useMemo(() => results.filter((r) => selected.has(r.poiId)), [results, selected]);
   const withTelCount = useMemo(() => results.filter((r) => r.tel).length, [results]);
@@ -91,7 +123,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
     const baseQuery: SearchQuery = {
       mode,
       keywords,
-      region,
+      region: districtAdcode || region,
       cityLimit,
       bounds,
       center,
@@ -113,7 +145,10 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       return;
     }
 
-    const isGrid = action === "new" && mode === "polygon" && gridN > 1 && bounds;
+    const isGrid =
+      action === "new" &&
+      gridN > 1 &&
+      ((mode === "polygon" && !!bounds) || (mode === "around" && !!center));
     if (isGrid) {
       const cost = gridCost * fetchPages;
       const ok = window.confirm(
@@ -125,6 +160,14 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
 
     setLoading(true);
     try {
+      // 周边模式:必要时定位中心点(深扫需以中心点画圆取外接矩形)
+      if (mode === "around" && !baseQuery.center) {
+        setLoadingLabel("正在定位中心点");
+        const loc = await geocode(centerAddr.trim(), settings.webKey, region);
+        setCenter(loc);
+        baseQuery.center = loc;
+      }
+
       const merged: PoiItem[] = [];
       const seen = new Set<string>();
       let calls = 0;
@@ -140,49 +183,54 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         }
       };
 
-      if (isGrid && bounds) {
-        const cells = splitBoundsGrid(bounds, gridN);
+      if (isGrid) {
+        // 框选:按框选矩形切格;周边:按圆形检索区的外接矩形切格
+        const scanBounds =
+          mode === "around" ? circleBounds(baseQuery.center, radius) : (bounds as Bounds);
+        const cells = splitBoundsGrid(scanBounds, gridN);
         for (let i = 0; i < cells.length; i++) {
           setLoadingLabel(`网格深扫 ${i + 1}/${cells.length} 区`);
-          const r = await searchPoiPages({ ...baseQuery, bounds: cells[i] }, settings.webKey, {
+          const r = await searchPoiPages({ ...baseQuery, mode: "polygon", bounds: cells[i] }, settings.webKey, {
             fromPage: 1,
             pageCount: fetchPages,
           });
           absorb(r);
         }
       } else {
-        // 周边模式:必要时定位中心点
-        if (mode === "around" && !baseQuery.center) {
-          setLoadingLabel("正在定位中心点");
-          const loc = await geocode(centerAddr.trim(), settings.webKey, region);
-          setCenter(loc);
-          baseQuery.center = loc;
-        }
         const fromPage = action === "new" ? 1 : loadedPages + 1;
-        const pageCount = fetchPages;
-        for (let p = 0; p < pageCount; p++) {
+        for (let p = 0; p < fetchPages; p++) {
           setLoadingLabel(`正在抓取第 ${fromPage + p} 页`);
           const r = await searchPoiPages(baseQuery, settings.webKey, {
             fromPage: fromPage + p,
             pageCount: 1,
           });
           absorb(r);
-          if (r.items.length === 0 && r.pagesFetched > 0) break;
+          if (r.items.length === 0) break;
         }
       }
 
       // 配额记账
       for (let i = 0; i < calls; i++) consumeQuota();
 
+      // 结果过滤:周边深扫裁剪成真正圆形范围;区县筛选保证行政区划唯一
+      let itemsOut = merged;
+      if (mode === "around" && isGrid && baseQuery.center) {
+        itemsOut = itemsOut.filter((it) => !it.location || withinRadius(baseQuery.center, it.location, radius));
+      }
+      const districtName = districts.find((d) => d.adcode === districtAdcode)?.name || "";
+      if (districtAdcode) {
+        itemsOut = itemsOut.filter((it) => it.adcode === districtAdcode);
+      }
+
       // 合并到结果
       const finalItems =
         action === "more"
           ? (() => {
               const map = new Map(results.map((r) => [r.poiId, r] as const));
-              for (const it of merged) map.set(it.poiId, it);
+              for (const it of itemsOut) map.set(it.poiId, it);
               return [...map.values()];
             })()
-          : merged;
+          : itemsOut;
 
       setResults(finalItems);
       setTotal(Math.max(apiTotal, finalItems.length));
@@ -201,18 +249,23 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
         endpoint: mode === "text" ? "place/text" : mode === "polygon" ? "place/polygon" : "place/around",
         summary:
           (isGrid ? `网格深扫${gridN}×${gridN}` : `检索[${splitKeywords(keywords).join("+")}]`) +
-          ` 新增${merged.length}条/累计${finalItems.length}条`,
+          (districtName ? `[${districtName}]` : "") +
+          ` 新增${itemsOut.length}条/累计${finalItems.length}条`,
         ok: true,
         error: "",
       });
 
-      if (!merged.length) {
+      if (!itemsOut.length) {
         toast(
-          action === "more" ? "没有更多结果了(高德对单次检索总量有截断,可试试网格深扫或更细关键词)" : "没有匹配结果,可换关键词或扩大范围",
+          merged.length && districtAdcode
+            ? `接口返回 ${merged.length} 条,但区县筛选后没有匹配(可清除区县筛选再试)`
+            : action === "more"
+              ? "没有更多结果了(高德对单次检索总量有截断,可试试网格深扫或更细关键词)"
+              : "没有匹配结果,可换关键词或扩大范围",
           "info",
         );
       } else {
-        toast(`新增 ${merged.length} 条,累计 ${finalItems.length} 条`, "success");
+        toast(`新增 ${itemsOut.length} 条,累计 ${finalItems.length} 条`, "success");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -286,6 +339,7 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
           bounds={bounds}
           onBoundsChange={setBounds}
           center={center}
+          radius={radius}
           onCenterChange={(loc) => {
             setCenter(loc);
             const [lng, lat] = loc.split(",");
@@ -320,25 +374,40 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
             />
           </div>
 
+          <div className="field" style={{ minWidth: 128 }}>
+            <span className="field-label">城市 / 区域</span>
+            <Input
+              value={region}
+              placeholder="保定市 / 130600"
+              onChange={(e) => setRegion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void doSearch("new")}
+            />
+          </div>
+
+          <div className="field" style={{ minWidth: 118 }}>
+            <span className="field-label">区 / 县{districtAdcode ? " ✓" : ""}</span>
+            <Select
+              value={districtAdcode}
+              disabled={!districts.length}
+              onChange={(e) => setDistrictAdcode(e.target.value)}
+            >
+              <option value="">{districts.length ? "全部区县" : "输入城市后加载"}</option>
+              {districts.map((d) => (
+                <option key={d.adcode} value={d.adcode}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
           {mode === "text" && (
-            <>
-              <div className="field" style={{ minWidth: 130 }}>
-                <span className="field-label">城市 / 区域</span>
-                <Input
-                  value={region}
-                  placeholder="保定市 / 130600"
-                  onChange={(e) => setRegion(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void doSearch("new")}
-                />
+            <div className="field" style={{ width: 96 }}>
+              <span className="field-label">限定城市</span>
+              <div className="switch-row" style={{ height: 32 }}>
+                <Switch on={cityLimit} onChange={setCityLimit} label="citylimit" />
+                <span style={{ fontSize: 11 }}>{cityLimit ? "已限定" : "不限"}</span>
               </div>
-              <div className="field" style={{ width: 96 }}>
-                <span className="field-label">限定城市</span>
-                <div className="switch-row" style={{ height: 32 }}>
-                  <Switch on={cityLimit} onChange={setCityLimit} label="citylimit" />
-                  <span style={{ fontSize: 11 }}>{cityLimit ? "已限定" : "不限"}</span>
-                </div>
-              </div>
-            </>
+            </div>
           )}
 
           {mode === "polygon" && (
@@ -410,6 +479,14 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
                       {r >= 1000 ? `${r / 1000} km` : `${r} m`}
                     </option>
                   ))}
+                </Select>
+              </div>
+              <div className="field" style={{ width: 118 }}>
+                <span className="field-label">网格深扫</span>
+                <Select value={String(gridN)} onChange={(e) => setGridN(Number(e.target.value))}>
+                  <option value={1}>关闭</option>
+                  <option value={2}>2×2(4格)</option>
+                  <option value={3}>3×3(9格)</option>
                 </Select>
               </div>
             </>
