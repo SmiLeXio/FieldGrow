@@ -1,7 +1,7 @@
 /** POI 详情弹窗 —— 调用 place/detail 获取完整商户信息(多电话/营业时间/别名等)。 */
 import { useEffect, useState } from "react";
 import { fetchDetail } from "../lib/amap";
-import { fmtLocation, fmtRating, telTypeLabel } from "../lib/format";
+import { fmtCityArea, fmtLocation, fmtRating, telTypeLabel } from "../lib/format";
 import type { PoiDetail, PoiItem } from "../lib/types";
 import { Badge, Btn, Icon, Modal } from "./ui";
 
@@ -144,11 +144,8 @@ export function DetailModal({
           )}
           <dt>POI 类型</dt>
           <dd>{d.type || "—"}</dd>
-          <dt>城市</dt>
-          <dd>
-            {d.city || "—"}
-            {d.adcode && <span className="muted"> · {d.adcode}</span>}
-          </dd>
+          <dt>区域</dt>
+          <dd>{fmtCityArea(d.city, d.district, d.adcode)}</dd>
           <dt>经纬度</dt>
           <dd className="mono">{fmtLocation(d.location)}</dd>
           <dt>POI ID</dt>

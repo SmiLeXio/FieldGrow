@@ -5,7 +5,7 @@
  * 想把一片区域摸全,靠「更小的格子 × 更多的页数 × 更细的关键词」。
  */
 import { invoke } from "@tauri-apps/api/core";
-import { classifyTel } from "./format";
+import { classifyTel, parseDistrict } from "./format";
 import type { Bounds, PoiDetail, PoiItem, SearchQuery, SearchResponse } from "./types";
 
 export const MAX_KEYWORDS = 3;
@@ -73,14 +73,17 @@ function toPoi(raw: Record<string, unknown>, source = "amap"): PoiItem {
     const n = Number(r);
     if (!Number.isNaN(n)) rating = n;
   }
+  const city = s(raw.cityname);
+  const address = s(raw.address);
   return {
     poiId: s(raw.id),
     name: s(raw.name),
-    address: s(raw.address),
+    address,
     tel,
     telType: classifyTel(tel),
     rating,
-    city: s(raw.cityname),
+    city,
+    district: s(raw.district) || parseDistrict(address, city),
     adcode: s(raw.adcode),
     location: s(raw.location),
     type: s(raw.type),

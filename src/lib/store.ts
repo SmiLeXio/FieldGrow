@@ -1,4 +1,5 @@
 /** 本地持久化 —— 设置 / 客户池 / 调用日志 / 配额计数,全部存于本机 localStorage。 */
+import { parseDistrict } from "./format";
 import type { LogEntry, PoolItem, Settings } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 
@@ -93,7 +94,11 @@ export function dedupePool(items: PoolItem[]): PoolItem[] {
 }
 
 export function loadPool(): PoolItem[] {
-  return dedupePool(loadList<PoolItem>(K.pool));
+  // 旧数据没有 district 字段:从地址回填区县
+  const items = loadList<PoolItem>(K.pool).map((p) =>
+    p.district ? p : { ...p, district: parseDistrict(p.address || "", p.city || "") },
+  );
+  return dedupePool(items);
 }
 
 export function savePool(pool: PoolItem[]) {

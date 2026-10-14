@@ -10,6 +10,8 @@ export interface PoiItem {
   telType: TelType;
   rating: number;
   city: string;
+  /** 区/县名,如 "莲池区" */
+  district: string;
   adcode: string;
   /** "经度,纬度" */
   location: string;

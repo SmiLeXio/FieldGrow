@@ -20,6 +20,7 @@ export function poiColumns<T extends PoiItem>(): ExportColumn<T>[] {
     { header: "电话类型", value: (r) => telTypeLabel(r.telType) },
     { header: "评分", value: (r) => (r.rating > 0 ? r.rating.toFixed(1) : "") },
     { header: "城市", value: (r) => r.city },
+    { header: "区县", value: (r) => r.district },
     { header: "行政区划", value: (r) => r.adcode },
     { header: "经纬度", value: (r) => fmtLocation(r.location) },
     { header: "POI类型", value: (r) => r.type },

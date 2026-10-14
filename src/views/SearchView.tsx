@@ -20,7 +20,7 @@ import {
   type SearchPagesResult,
 } from "../lib/amap";
 import { exportRows, poiColumns } from "../lib/export";
-import { fmtRating, telTypeLabel } from "../lib/format";
+import { fmtCityArea, fmtRating, telTypeLabel } from "../lib/format";
 import type { Bounds, PoiItem, SearchMode, SearchQuery } from "../lib/types";
 
 const MODES: { key: SearchMode; label: string }[] = [
@@ -224,6 +224,13 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
       if (districtAdcode) {
         itemsOut = itemsOut.filter((it) => it.adcode === districtAdcode);
       }
+
+      // 区名校准:区县列表(adcode→名称)比地址解析更权威,有则覆盖
+      const dmap = new Map(districts.map((d) => [d.adcode, d.name] as const));
+      itemsOut = itemsOut.map((it) => {
+        const n = dmap.get(it.adcode);
+        return n && n !== it.district ? { ...it, district: n } : it;
+      });
 
       // 合并到结果
       const finalItems =
@@ -669,10 +676,9 @@ export function SearchView({ onGoSettings }: { onGoSettings?: () => void }) {
                 )}
               </div>
               <div className="store-card-row">
-                <span className="label">城市</span>
+                <span className="label">区域</span>
                 <span style={{ flex: 1 }}>
-                  {focusPoi.city || "—"}
-                  {focusPoi.adcode && <span className="muted"> · {focusPoi.adcode}</span>}
+                  {fmtCityArea(focusPoi.city, focusPoi.district, focusPoi.adcode)}
                 </span>
               </div>
             </div>
